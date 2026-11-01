@@ -7,11 +7,31 @@ from app.core.errors import UNAUTHORIZED, ErrorCode, responses
 from app.domains.restaurant.schemas import (
     MenuDetailResponse,
     PersonalizedMenuResponse,
+    ResolveRestaurantRequest,
+    RestaurantBrief,
     RestaurantDetailResponse,
     RestaurantListResponse,
 )
 
 router = APIRouter(prefix="/api/restaurants", tags=["식당"])
+
+
+@router.post(
+    "",
+    response_model=RestaurantBrief,
+    summary="식당 등록 또는 조회",
+    description=(
+        "kakao_place_id` 로 우리 DB의 식당을 찾고, 없으면 만들어서 "
+        "`restaurant_id` 를 돌려준다.\n\n"
+        "nearby search 는 `restaurant_id` 가 null 일 수 있다. "
+        "이미 있는 식당이면 바디 값은 무시하고 저장된 행을 돌려준다."
+    ),
+    responses=responses(UNAUTHORIZED),
+)
+async def resolve(
+    body: ResolveRestaurantRequest, user_id: CurrentUser
+) -> RestaurantBrief:
+    raise NotImplementedError
 
 
 @router.get(
@@ -21,7 +41,10 @@ router = APIRouter(prefix="/api/restaurants", tags=["식당"])
     description=(
         "카카오 로컬 API 결과에 우리 데이터를 합쳐서 돌려준다. "
         "거리순이다.\n\n"
-        "checked_menu_count>0 이면 지도 핀에 숫자를 띄운다."
+        "checked_menu_count>0 이면 지도 핀에 숫자를 띄운다.\n\n"
+        "restaurant_id 는 null 일 수 있다. (카카오에만 있고 우리 DB 에 아직) "
+        "Select 를 누르면 `POST /api/restaurants` 로 id 를 받는다. "
+        "식별은 항상 kakao_place_id 로 한다."
     ),
     responses=responses(
         UNAUTHORIZED, (502, "카카오 API 실패", ErrorCode.MAP_UNAVAILABLE)

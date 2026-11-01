@@ -26,12 +26,15 @@ pytest
 ```
 app/
 ├── main.py              앱 생성, 라우터 등록, Swagger
+├── models.py            모델 모음 (Alembic 이 읽는다)
 ├── core/
 │   ├── config.py        환경변수
+│   ├── db.py            DB 연결과 세션
 │   ├── errors.py        에러 코드, 공통 핸들러
 │   └── deps.py          deviceToken 인증
 ├── common/
-│   └── schemas.py       도메인 공통 타입
+│   ├── schemas.py       도메인 공통 타입
+│   └── models.py        성분·음식 사전
 └── domains/             
     ├── auth/            가입·닉네임·탈퇴
     ├── profile/         식이 프로필
@@ -40,6 +43,9 @@ app/
     ├── scan/            촬영·분석·직원 확인
     ├── check/           저장한 메뉴
     └── saved/           저장한 식당
+
+alembic/
+└── versions/            마이그레이션
 
 tests/
 └── test_contract.py     

@@ -17,11 +17,14 @@ device_token_scheme = APIKeyHeader(
 DeviceToken = Annotated[str | None, Depends(device_token_scheme)]
 
 
-def is_uuid4(value: str) -> bool:
+def canonical_uuid4(value: str | None) -> str | None:
+    """UUID v4 면 표준 표기로, 아니면 None.
+    하이픈이 있든 없든 같은 토큰"""
     try:
-        return UUID(value).version == 4
+        parsed = UUID(value)
     except (ValueError, AttributeError, TypeError):
-        return False
+        return None
+    return str(parsed) if parsed.version == 4 else None
 
 
 _UNAUTHORIZED_MESSAGE = "유효한 deviceToken이 필요합니다."
@@ -35,10 +38,11 @@ async def get_current_user_id(device_token: DeviceToken) -> int:
             ErrorCode.UNAUTHORIZED, _UNAUTHORIZED_MESSAGE, status_code=401
         )
 
-    if not device_token or not is_uuid4(device_token):
+    token = canonical_uuid4(device_token)
+    if token is None:
         raise unauthorized()
 
-    # TODO: users 조회
+    # TODO: sha256(token) 으로 users 조회
     raise unauthorized()
 
 
