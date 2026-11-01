@@ -1,0 +1,91 @@
+language: "ko-KR"
+tone_instructions: >-
+  한국어로 간결하고 구체적으로 리뷰하세요. 실제 버그, 보안 문제, API 계약 위반을
+  우선 지적하고 수정 방향을 제시하세요. 단순 취향 차이나 근거 없는 추측은 피하세요.
+
+reviews:
+  profile: "chill"
+  high_level_summary: true
+  poem: false
+
+  auto_approvals:
+    enabled: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches:
+      - "^main$"
+      - "^dev$"
+
+  path_filters:
+    - "!openapi.json"
+    - "!**/__pycache__/**"
+    - "!**/.pytest_cache/**"
+    - "!**/.venv/**"
+
+  path_instructions:
+    - path: "app/**/*.py"
+      instructions: |
+        이 저장소는 Python 3.12/3.13, FastAPI, Pydantic 기반 백엔드입니다.
+        Python 함수·변수·모듈은 snake_case, 클래스는 UpperCamelCase,
+        Enum 상수는 UPPER_SNAKE_CASE 규칙을 따릅니다.
+        실제 오류와 보안상 위험을 우선 검토하고 사소한 스타일 의견은 줄이세요.
+        아직 Skeleton 단계이므로 기존 NotImplementedError와 501 응답 자체를
+        결함으로 지적하지 마세요. 구현된 동작의 회귀나 새로 생긴 문제에 집중하세요.
+
+    - path: "app/domains/**/router.py"
+      instructions: |
+        기존 프론트엔드 API 계약을 유지하는지 확인하세요.
+        경로는 소문자 복수형 명사와 하이픈을 사용하고, 예외적인 하위 동작만 동사를 허용합니다.
+        인증이 필요한 엔드포인트에 CurrentUser 의존성이 빠지지 않았는지 확인하세요.
+        HTTP 상태 코드, response_model, 요청 필드, 오류 응답 형식이
+        Swagger/OpenAPI 설명 및 기존 계약 테스트와 일치하는지 검토하세요.
+        호환성을 깨는 변경은 영향받는 클라이언트와 테스트 수정 필요성을 알려주세요.
+
+    - path: "app/domains/**/schemas.py"
+      instructions: |
+        외부에 노출되는 JSON 필드는 snake_case 규칙을 유지하세요.
+        Pydantic 입력 검증, 필수·선택 필드, nullable 값, 자료형 및 Enum 값의
+        변경으로 기존 API 계약이 깨지지 않는지 확인하세요.
+        타입이나 제약 조건이 변경되면 관련 계약 테스트를 함께 점검하세요.
+
+    - path: "app/core/**"
+      instructions: |
+        deviceToken은 계정 접근 권한을 가진 비밀 값입니다.
+        로그, 예외 메시지, URL, 응답 본문에 원문이 노출되지 않는지 확인하세요.
+        인증에서는 UUID v4 검증을 유지하고 누락·형식 오류·미등록 토큰을
+        동일한 401 응답으로 처리하는지 확인하세요.
+        DB 저장 시 토큰 원문 대신 해시를 사용하도록 검토하세요.
+        환경변수 및 외부 API 키를 하드코딩하거나 모바일 앱에 노출하지 마세요.
+        오류는 공통 error.code, error.message, error.detail 형식을 유지하세요.
+
+    - path: "app/domains/scan/**"
+      instructions: |
+        이미지 업로드의 크기·형식 검증, 외부 모델 호출의 타임아웃,
+        실패 처리, 비동기 코드에서의 불필요한 블로킹 작업을 확인하세요.
+        OCR·분석 실패가 문서화된 상태 코드와 에러 코드로 반환되는지 검토하세요.
+        아직 구현되지 않은 기능을 무리하게 추가하도록 요구하지 마세요.
+
+    - path: "tests/**"
+      instructions: |
+        인증 누락 401, 잘못된 입력 422, 없는 경로 404,
+        허용되지 않는 메서드 405, 미구현 API 501 등의 계약 테스트가
+        변경된 동작을 충분히 검증하는지 확인하세요.
+        성공 경로뿐 아니라 실패·경계 조건 테스트를 권장하되,
+        실제 외부 AI API나 운영 DB 연결을 단위 테스트의 필수 조건으로 만들지 마세요.
+
+    - path: "alembic/**"
+      instructions: |
+        DB 테이블명은 복수형 소문자 snake_case, 컬럼명은 snake_case를 사용하세요.
+        컬럼명에 테이블명을 불필요하게 반복하지 마세요.
+        DB 스키마 변경은 Alembic 마이그레이션으로 관리하고,
+        데이터 손실이나 롤백 문제를 유발할 변경을 확인하세요.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        PR에서 테스트가 실행되고 필요한 Python 의존성이 설치되는지 확인하세요.
+        CI 로그에 토큰·비밀 키가 노출되지 않는지 검토하세요.
+        생성된 openapi.json은 Git 추적 대상이 아닙니다.
+        프론트에는 배포된 서버의 /docs 링크로 공유합니다.
