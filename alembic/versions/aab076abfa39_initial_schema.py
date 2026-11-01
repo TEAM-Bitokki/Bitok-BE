@@ -1,8 +1,8 @@
 """initial schema
 
-Revision ID: 4fe7e0474f25
+Revision ID: aab076abfa39
 Revises: 
-Create Date: 2026-11-01 08:19:39.948461
+Create Date: 2026-11-01 14:27:12.693361
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '4fe7e0474f25'
+revision: str = 'aab076abfa39'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -137,13 +137,13 @@ def upgrade() -> None:
     )
     op.create_table('scans',
     sa.Column('id', sa.BigInteger(), sa.Identity(always=True), nullable=False),
-    sa.Column('user_id', sa.BigInteger(), nullable=False),
+    sa.Column('user_id', sa.BigInteger(), nullable=True),
     sa.Column('restaurant_id', sa.BigInteger(), nullable=True),
     sa.Column('image_url', sa.Text(), nullable=False),
     sa.Column('raw_ocr', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['restaurant_id'], ['restaurants.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('idx_scans_user', 'scans', ['user_id', sa.literal_column('created_at DESC')], unique=False)
@@ -152,14 +152,14 @@ def upgrade() -> None:
     sa.Column('restaurant_id', sa.BigInteger(), nullable=False),
     sa.Column('dish_id', sa.BigInteger(), nullable=False),
     sa.Column('ingredient_id', sa.BigInteger(), nullable=False),
-    sa.Column('user_id', sa.BigInteger(), nullable=False),
+    sa.Column('user_id', sa.BigInteger(), nullable=True),
     sa.Column('answer', sa.String(length=10), nullable=False),
     sa.Column('checked_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.CheckConstraint("answer IN ('yes','no','unsure')", name='ck_answer'),
     sa.ForeignKeyConstraint(['dish_id'], ['dishes.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['ingredient_id'], ['ingredients.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['restaurant_id'], ['restaurants.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('idx_staff_checks_lookup', 'staff_checks', ['restaurant_id', 'dish_id', sa.literal_column('checked_at DESC')], unique=False)

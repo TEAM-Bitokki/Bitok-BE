@@ -26,7 +26,10 @@ class Scan(Base):
     __tablename__ = "scans"
 
     id: Mapped[BigPK]
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
 
     # 식당을 고르지 않고 진행하면 NULL
     restaurant_id: Mapped[int | None] = mapped_column(
@@ -105,7 +108,10 @@ class StaffCheck(Base):
     ingredient_id: Mapped[int] = mapped_column(
         ForeignKey("ingredients.id", ondelete="CASCADE")
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # 탈퇴 시 익명화만
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
     answer: Mapped[str] = mapped_column(String(10))
     checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
