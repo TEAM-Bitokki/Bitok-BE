@@ -1,0 +1,32 @@
+# /etc/systemd/system/bitok.service
+#
+# 설치:
+#   sudo cp deploy/bitok.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now bitok
+#
+# 상태 확인:  sudo systemctl status bitok
+# 로그:       sudo journalctl -u bitok -f
+
+[Unit]
+Description=Bitok API
+# DB 가 도커로 뜨므로 docker 보다 먼저 시작되면 안 된다
+Requires=docker.service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Bitok-BE
+EnvironmentFile=/home/ubuntu/Bitok-BE/.env
+ExecStart=/home/ubuntu/Bitok-BE/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# 프로세스가 죽으면 5초 뒤 다시 띄운다. 크래시도 SSH 종료도 여기서 막힌다
+Restart=always
+RestartSec=5
+
+# 메모리가 바닥나면 커널이 프로세스를 죽인다. t3.micro(1GB)에서 실제로 난다
+MemoryMax=700M
+
+[Install]
+WantedBy=multi-user.target
