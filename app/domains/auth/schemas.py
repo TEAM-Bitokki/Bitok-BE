@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, field_validator
 
 from app.common.schemas import DietType
-from app.core.deps import is_uuid4
+from app.core.deps import canonical_uuid4
 
 
 class SignUpRequest(BaseModel):
@@ -11,9 +11,10 @@ class SignUpRequest(BaseModel):
     @field_validator("device_token")
     @classmethod
     def _check_uuid4(cls, v: str) -> str:
-        if not is_uuid4(v):
+        token = canonical_uuid4(v)
+        if token is None:
             raise ValueError("UUID v4 형식이어야 합니다")
-        return v.lower()
+        return token
 
 
 class MeResponse(BaseModel):
