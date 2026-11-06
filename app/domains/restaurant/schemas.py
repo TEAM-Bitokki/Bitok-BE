@@ -42,8 +42,8 @@ class RestaurantDetailResponse(BaseModel):
 class MenuMatch(BaseModel):
     ingredient: str = Field(examples=["새우젓"])
     ingredient_en: str = Field(examples=["Salted Shrimp"])
-    tag: str = Field(examples=["crustacean"])
-    tag_en: str = Field(examples=["Crustacean Shellfish"])
+    tag: str | None = Field(default=None, examples=["crustacean"])
+    tag_en: str | None = Field(default=None, examples=["Crustacean Shellfish"])
     status: MatchStatus = Field(examples=["allergy"])
     likelihood: Likelihood = Field(examples=["possible"])
     verdict: Verdict | None = Field(default=None, examples=["avoid"])
