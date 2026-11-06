@@ -85,6 +85,38 @@ def test_me_requires_registered_token(client):
     assert client.get("/api/auth/me", headers=H).status_code == 200
 
 
+def test_update_nickname(client):
+    client.post(
+        "/api/auth/sign-up", json={"device_token": V4, "nickname": "Sarah"}
+    )
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "현영"}
+    )
+
+    assert r.status_code == 200
+    assert r.json()["nickname"] == "현영"
+    assert client.get("/api/auth/me", headers=H).json()["nickname"] == "현영"
+
+
+def test_update_nickname_requires_registered_token(client):
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "현영"}
+    )
+    assert r.status_code == 401
+
+
+def test_update_nickname_rejects_more_than_20_characters(client):
+    client.post("/api/auth/sign-up", json={"device_token": V4})
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "가" * 21}
+    )
+
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
 def test_delete_needs_agreement(client):
     client.post("/api/auth/sign-up", json={"device_token": V4})
     r = client.request("DELETE", "/api/users/me", headers=H, json={"agree": False})

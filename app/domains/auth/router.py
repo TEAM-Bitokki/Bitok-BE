@@ -49,8 +49,10 @@ async def get_me(user_id: CurrentUser, session: SessionDep) -> MeResponse:
     summary="닉네임 수정",
     responses=responses(UNAUTHORIZED),
 )
-async def update_nickname(body: NicknameRequest, user_id: CurrentUser) -> MeResponse:
-    raise NotImplementedError
+async def update_nickname(
+    body: NicknameRequest, user_id: CurrentUser, session: SessionDep
+) -> MeResponse:
+    return await service.update_nickname(session, user_id, body.nickname)
 
 
 @router.delete(

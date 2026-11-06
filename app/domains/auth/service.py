@@ -69,6 +69,19 @@ async def get_me(session: AsyncSession, user_id: int) -> MeResponse:
     )
 
 
+async def update_nickname(
+    session: AsyncSession, user_id: int, nickname: str
+) -> MeResponse:
+    user = await session.get(User, user_id)
+    if user is None:
+        # 인증을 지난 뒤 다른 요청이 탈퇴시킨 경우
+        raise unauthorized()
+
+    user.nickname = nickname
+    await session.commit()
+    return await get_me(session, user_id)
+
+
 async def delete_account(
     session: AsyncSession, user_id: int, delete_saved_menus: bool
 ) -> None:
