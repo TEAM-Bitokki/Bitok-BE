@@ -4,6 +4,7 @@ import asyncio
 from functools import cache
 from typing import Literal
 
+import httpx
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, Field, ValidationError
@@ -121,6 +122,6 @@ async def extract_menu(image: bytes, mime: str) -> MenuExtraction:
             error = BitokError(
                 ErrorCode.LLM_TIMEOUT, "모델 응답이 너무 늦습니다.", status_code=504
             )
-        except (errors.APIError, ValidationError, ValueError):
+        except (errors.APIError, httpx.TransportError, ValidationError, ValueError):
             error = _unavailable()
     raise error

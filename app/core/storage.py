@@ -13,7 +13,11 @@ async def save_image(data: bytes, ext: str) -> str:
     key = f"scans/{datetime.now():%Y/%m}/{uuid4().hex}.{ext}"
     path = Path(settings.upload_dir) / key
     await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
-    await asyncio.to_thread(path.write_bytes, data)
+    try:
+        await asyncio.to_thread(path.write_bytes, data)
+    except BaseException:
+        await asyncio.to_thread(path.unlink, missing_ok=True)
+        raise
     return key
 
 

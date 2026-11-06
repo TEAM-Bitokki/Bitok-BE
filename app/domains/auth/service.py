@@ -1,11 +1,14 @@
 """가입 조회 탈퇴"""
 
+import contextlib
+
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import unauthorized
 from app.core.security import hash_token
+from app.core.storage import delete_image
 from app.domains.auth.models import User
 from app.domains.auth.schemas import MeResponse
 from app.domains.check.models import MyCheck
@@ -69,8 +72,15 @@ async def delete_account(
 ) -> None:
     """users 를 지우면 FK 정책에 따라 나뉜다.
     false면 개인 설정은 사라지고 공개 기록은 익명화되어 남는다."""
+    images = []
     if delete_saved_menus:
+        images = list(
+            await session.scalars(select(Scan.image_url).where(Scan.user_id == user_id))
+        )
         await session.execute(delete(MyCheck).where(MyCheck.user_id == user_id))
         await session.execute(delete(Scan).where(Scan.user_id == user_id))
     await session.execute(delete(User).where(User.id == user_id))
     await session.commit()
+    for key in images:  # 탈퇴는 이미 끝났다. 사진 하나 못 지웠다고 실패로 돌리지 않는다
+        with contextlib.suppress(OSError):
+            await delete_image(key)
