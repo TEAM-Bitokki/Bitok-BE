@@ -24,6 +24,8 @@ from app.core.db import SessionMaker
 MIN_INGREDIENT = 3  # 이보다 적게 나온 재료는 버린다
 MIN_DISH = 2  # 이보다 적게 나온 메뉴는 런타임 LLM 몫
 TYPICAL_RATIO = 0.5  # 같은 메뉴 중 이 비율 이상에 나온 재료만 typical
+INGREDIENT_MAX = Ingredient.__table__.c.name_ko.type.length
+DISH_MAX = Dish.__table__.c.name_ko.type.length
 
 # 기획서 알레르기 검색 목록. 이것만 검색에 나온다
 SEARCHABLE = [
@@ -331,6 +333,7 @@ class Plan:
     ingredients: dict[str, tuple[str, set[str], bool]] = field(default_factory=dict)
     aliases: dict[str, str] = field(default_factory=dict)
     dishes: dict[str, tuple[str, str, set[str]]] = field(default_factory=dict)
+    too_long: list[str] = field(default_factory=list)
 
 
 def read_rows(paths: list[str]) -> list[dict]:
@@ -370,6 +373,9 @@ def build(rows: list[dict]) -> Plan:
         if name in plan.ingredients or n < MIN_INGREDIENT or not en_of[name]:
             continue
         en = en_of[name].most_common(1)[0][0]
+        if max(len(name), len(en)) > INGREDIENT_MAX:
+            plan.too_long.append(name)
+            continue
         plan.ingredients[name] = (en, tags_for(name), False)
     plan.aliases = {a: ko for a, ko in alias_of.items() if ko in plan.ingredients}
 
@@ -391,6 +397,9 @@ def build(rows: list[dict]) -> Plan:
         typical = {n for n, c in seen.items() if c / len(group) >= TYPICAL_RATIO}
         name_ko = Counter(r["ko"].strip() for r in group).most_common(1)[0][0]
         name_en = roman(Counter(r["en.ROMAN"] for r in group).most_common(1)[0][0])
+        if max(len(key), len(name_ko), len(name_en)) > DISH_MAX:
+            plan.too_long.append(key)
+            continue
         plan.dishes[key] = (name_ko, name_en, typical)
     return plan
 
@@ -421,6 +430,9 @@ async def seed(session: AsyncSession, plan: Plan) -> dict[str, int]:
     )
     ids = dict((await session.execute(select(Ingredient.name_ko, Ingredient.id))).all())
 
+    await session.execute(
+        delete(IngredientAlias).where(IngredientAlias.alias.not_in(list(plan.aliases)))
+    )
     if plan.aliases:
         stmt = insert(IngredientAlias).values(
             [{"alias": a, "ingredient_id": ids[ko]} for a, ko in plan.aliases.items()]
@@ -474,6 +486,7 @@ async def seed(session: AsyncSession, plan: Plan) -> dict[str, int]:
         "aliases": len(plan.aliases),
         "dishes": len(plan.dishes),
         "dish_ingredients": len(links),
+        "too_long": plan.too_long,
     }
 
 

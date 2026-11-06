@@ -39,6 +39,14 @@ def test_tags_avoid_substring_traps():
     assert tags_for("돔베고기") == {"meat"}
 
 
+def test_build_skips_names_too_long_for_columns():
+    """하나 때문에 시드 전체가 실패하지 않게 건너뛴다"""
+    long = "가" * 130
+    plan = build([menu(long, ["김치"])] * 2 + [menu("김치찌개", ["김치"])] * 2)
+    assert set(plan.dishes) == {"김치찌개"}
+    assert plan.too_long == [long]
+
+
 def test_build_merges_spacing_and_drops_rare():
     plan = build(
         [
@@ -117,6 +125,7 @@ async def test_seed_rerun_applies_changed_rules(session):
     session.add(Ingredient(name_ko="옛날항목", name_en="old", searchable=True))
     await session.commit()
     plan.aliases["소고기"] = "양파"
+    del plan.aliases["달걀"]
     plan.dishes["불고기"] = ("불고기", "Bulgogi", {"쇠고기"})
     await seed(session, plan)
 
@@ -134,6 +143,10 @@ async def test_seed_rerun_applies_changed_rules(session):
         )
     )
     assert target == "양파"
+    gone = await session.scalar(
+        text("SELECT count(*) FROM ingredient_aliases WHERE alias = '달걀'")
+    )
+    assert gone == 0
     stale = await session.scalar(
         text("SELECT searchable FROM ingredients WHERE name_ko = '옛날항목'")
     )
