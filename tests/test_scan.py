@@ -1,12 +1,15 @@
 """메뉴판 촬영 + 인식"""
 
+import asyncio
 from io import BytesIO
 from pathlib import Path
 
+import httpx
 import pytest
 from google.genai import errors
 from PIL import Image
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.models import Dish
 from app.core.config import settings
@@ -26,6 +29,13 @@ def jpeg(size=64) -> bytes:
 
 JPEG = jpeg()
 BROKEN = jpeg(400)[:20_000]  # 헤더는 멀쩡하고 뒤가 잘림
+
+
+def huge_png() -> bytes:
+    """파일은 작은데 풀면 2500만 픽셀"""
+    buf = BytesIO()
+    Image.new("1", (5000, 5000)).save(buf, "PNG")
+    return buf.getvalue()
 
 
 @pytest.fixture
@@ -64,15 +74,17 @@ async def test_scan_reads_menu_and_saves(client, session, user, monkeypatch):
         monkeypatch,
         MenuItem(raw_name="김치 찌개", name_en="Kimchi Stew", confidence=0.9),
         MenuItem(raw_name="사장님특제", name_en="Sajangnim Teukje", confidence=0.6),
+        MenuItem(raw_name="공기밥", name_en="  ", confidence=0.9),
     )
 
     r = upload(client)
 
     assert r.status_code == 201
     items = r.json()["items"]
-    assert [i["temp_id"] for i in items] == ["i1", "i2"]
+    assert [i["temp_id"] for i in items] == ["i1", "i2", "i3"]
     assert items[0]["name_en"] == "Kimchijjigae"  # 사전 표기가 이긴다
     assert items[1]["name_en"] == "Sajangnim Teukje"
+    assert items[2]["name_en"] is None  # 빈 로마자는 비워서 보낸다
 
     scan = await session.scalar(select(Scan))
     assert scan.raw_ocr["items"][0]["raw_name"] == "김치 찌개"
@@ -81,8 +93,8 @@ async def test_scan_reads_menu_and_saves(client, session, user, monkeypatch):
 
 @pytest.mark.parametrize(
     "data",
-    [b"not an image", BROKEN, JPEG + b"0" * 1024 * 1024],
-    ids=["텍스트", "깨진 JPEG", "1MB 초과"],
+    [b"not an image", BROKEN, JPEG + b"0" * 1024 * 1024, huge_png()],
+    ids=["텍스트", "깨진 JPEG", "1MB 초과", "픽셀 과다"],
 )
 def test_scan_rejects_bad_image(client, user, monkeypatch, data):
     monkeypatch.setattr(settings, "max_image_mb", 1)
@@ -135,8 +147,9 @@ def test_llm_timeout_retries_once(client, user, monkeypatch):
 
     async def slow(image, mime):
         calls.append(1)
-        raise TimeoutError
+        await asyncio.sleep(10)
 
+    monkeypatch.setattr(settings, "llm_timeout_sec", 0.05)
     monkeypatch.setattr(ocr, "_call", slow)
     r = upload(client)
     assert r.status_code == 504
@@ -157,16 +170,55 @@ def test_mock_llm_needs_no_key(client, user, monkeypatch):
     ]
 
 
-@pytest.mark.parametrize("code,tries", [(400, 1), (429, 2)])
-def test_client_error_retries_only_rate_limit(client, user, monkeypatch, code, tries):
-    """키가 틀린 건 다시 불러도 같고, 요청 제한은 풀릴 수 있다"""
+@pytest.mark.parametrize(
+    "error,tries",
+    [
+        (errors.ClientError(400, {"error": {"message": "key"}}), 1),
+        (errors.ClientError(429, {"error": {"message": "rate"}}), 2),
+        (httpx.ConnectError("down"), 2),
+    ],
+    ids=["400", "429", "연결 끊김"],
+)
+def test_llm_errors_retry_only_transient(client, user, monkeypatch, error, tries):
+    """키가 틀린 건 다시 불러도 같고, 요청 제한·연결 끊김은 풀릴 수 있다"""
     calls = []
 
     async def fail(image, mime):
         calls.append(1)
-        raise errors.ClientError(code, {"error": {"message": "x"}})
+        raise error
 
     monkeypatch.setattr(ocr, "_call", fail)
     r = upload(client)
     assert r.status_code == 502
+    assert r.json()["error"]["code"] == "LLM_UNAVAILABLE"
     assert len(calls) == tries
+
+
+def test_commit_failure_removes_image(client, user, monkeypatch):
+    ocr_returns(
+        monkeypatch, MenuItem(raw_name="국밥", name_en="Gukbap", confidence=0.9)
+    )
+
+    async def broken(self):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(AsyncSession, "commit", broken)
+    assert upload(client).status_code == 500
+    assert list(Path(user).rglob("*.jpg")) == []
+
+
+def test_delete_account_removes_images(client, user, monkeypatch):
+    """분석 기록까지 지우는 탈퇴면 사진도 지운다"""
+    ocr_returns(
+        monkeypatch, MenuItem(raw_name="국밥", name_en="Gukbap", confidence=0.9)
+    )
+    upload(client)
+    assert list(Path(user).rglob("*.jpg"))
+
+    client.request(
+        "DELETE",
+        "/api/users/me",
+        headers=H,
+        json={"agree": True, "delete_saved_menus": True},
+    )
+    assert list(Path(user).rglob("*.jpg")) == []

@@ -1,6 +1,7 @@
 """촬영 + 인식"""
 
 import asyncio
+import threading
 from io import BytesIO
 from statistics import median
 
@@ -20,6 +21,10 @@ from app.domains.scan.ocr import extract_menu
 from app.domains.scan.schemas import RecognizedItem, ScanResponse
 
 LOW_CONFIDENCE = 0.5  # 절반 넘는 줄이 이보다 낮으면 사진 자체가 흐린 것
+MAX_PIXELS = (
+    20_000_000  # 앱은 긴 변 1600px 로 줄여 보낸다. 폰 원본(1200만)까지는 받는다
+)
+_decoding = threading.BoundedSemaphore(2)  # 서버 메모리 700MB 안에서 동시에 풀 장수
 FORMATS = {
     "JPEG": ("jpg", "image/jpeg"),
     "PNG": ("png", "image/png"),
@@ -30,7 +35,9 @@ FORMATS = {
 def image_kind(data: bytes) -> tuple[str, str] | None:
     """앱이 보낸 Content-Type 대신 끝까지 열어본다. 깨진 파일은 여기서 걸린다"""
     try:
-        with Image.open(BytesIO(data)) as img:
+        with _decoding, Image.open(BytesIO(data), formats=list(FORMATS)) as img:
+            if img.width * img.height > MAX_PIXELS:
+                return None
             img.load()
             return FORMATS.get(img.format)
     except Exception:
@@ -62,6 +69,7 @@ async def create_scan(
     if restaurant_id is not None and not await session.get(Restaurant, restaurant_id):
         raise BitokError(ErrorCode.NOT_FOUND, "없는 식당입니다.", 404)
 
+    await session.rollback()  # 모델을 기다리는 동안 DB 커넥션을 잡고 있지 않게
     result = await extract_menu(data, kind[1])
     items = [i for i in result.items if i.raw_name.strip()]
     if not items:
@@ -85,7 +93,7 @@ async def create_scan(
         RecognizedItem(
             temp_id=f"i{n}",
             raw_name=i.raw_name.strip(),
-            name_en=known.get(canonical_name(i.raw_name)) or i.name_en,
+            name_en=known.get(canonical_name(i.raw_name)) or i.name_en.strip() or None,
             confidence=round(i.confidence, 2),
         )
         for n, i in enumerate(items, 1)
