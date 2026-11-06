@@ -2,8 +2,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, UploadFile, status
 
+from app.core.db import SessionDep
 from app.core.deps import CurrentUser
 from app.core.errors import UNAUTHORIZED, ErrorCode, responses
+from app.domains.scan import service
 from app.domains.scan.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -35,7 +37,8 @@ router = APIRouter(prefix="/api/scans", tags=["스캔/분석"])
         "| `PROFILE_REQUIRED` | 식이 프로필이 없음 |\n"
         "| `LLM_UNAVAILABLE` · `LLM_TIMEOUT` | LLM오류 |\n\n"
         "### 추가 고려사항\n\n"
-        "- `items[].name_en` — 로마자 표기. 번역 아님 (불고기 → Bulgogi)\n"
+        "- `items[].name_en` — 로마자 표기. 번역 아님 (불고기 → Bulgogi). "
+        "사전에 있는 메뉴면 사전 표기를 쓴다\n"
         "- `items[].confidence` — 0.7 미만이면 살짝 못 믿김...\n"
         "- `items[].temp_id` — 이 스캔 안에서만 쓰는 임시 id. 무시하세요.\n"
         "- `image_quality` — ok, blurry, cropped 셋 중 하나. "
@@ -43,6 +46,7 @@ router = APIRouter(prefix="/api/scans", tags=["스캔/분석"])
     responses=responses(
         UNAUTHORIZED,
         (400, "이미지 형식 크기 문제", ErrorCode.INVALID_IMAGE),
+        (404, "없는 식당"),
         (
             422,
             "식이 프로필 미등록 또는 메뉴를 하나도 읽지 못함",
@@ -54,6 +58,7 @@ router = APIRouter(prefix="/api/scans", tags=["스캔/분석"])
 )
 async def create_scan(
     user_id: CurrentUser,
+    session: SessionDep,
     image: Annotated[UploadFile, File(description="메뉴판 사진")],
     restaurant_id: Annotated[
         int | None,
@@ -62,7 +67,7 @@ async def create_scan(
         ),
     ] = None,
 ) -> ScanResponse:
-    raise NotImplementedError
+    return await service.create_scan(session, user_id, image, restaurant_id)
 
 
 @router.post(

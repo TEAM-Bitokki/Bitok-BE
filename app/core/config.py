@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # 이미지
     max_image_mb: int = 10
+    upload_dir: str = "uploads"
 
     # /docs 보호
     docs_username: str = "bitok"
