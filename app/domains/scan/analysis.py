@@ -34,7 +34,6 @@ from app.domains.scan.schemas import StaffQuestion as QuestionOut
 
 NAME_MAX = Ingredient.__table__.c.name_ko.type.length
 ROMAN_MAX = Dish.__table__.c.name_en.type.length
-MAX_INGREDIENTS = 30  # 모델이 한 메뉴에 내는 재료 상한
 
 # 식단을 물을 때 쓰는 말
 ASK_FOR_TAG = {
@@ -77,7 +76,11 @@ async def analyze(
     await session.rollback()  # 모델을 기다리는 동안 DB 커넥션을 잡고 있지 않게
     infos = await describe_dishes(ask)
 
-    locked = select(Scan.id).where(Scan.id == scan_id).with_for_update()
+    locked = (
+        select(Scan.id)
+        .where(Scan.id == scan_id, Scan.user_id == user_id)
+        .with_for_update()
+    )
     if await session.scalar(locked) is None:  # 같은 스캔을 두 번 보내면 차례로
         raise BitokError(ErrorCode.NOT_FOUND, "없는 스캔입니다.", 404)
     dish_ids = await _save_dishes(session, menus, found, infos)
@@ -192,28 +195,38 @@ async def _save_dishes(
         found = found | {k: (ids[k], None) for k in new}
     dish_ids = {k: i for k, (i, _) in found.items()}
 
-    described = [dish_ids[k] for k, n in menus.items() if n in infos]
+    described = {dish_ids[k]: n for k, n in menus.items() if n in infos}
     if described:
         await session.execute(
             update(Dish).where(Dish.id.in_(described)).values(described_at=now)
         )
-    told = {
-        dish_ids[k]: _ingredients(infos[n])
+    for dish_id, n in described.items():
+        await session.execute(
+            update(Dish)
+            .where(
+                Dish.id == dish_id,
+                Dish.name_en == Dish.name_ko,
+                Dish.verified.is_(False),
+            )
+            .values(name_en=_roman(infos[n], n))
+        )
+    told = [
+        (dish_ids[k], _ingredients(infos[n]))
         for k, n in menus.items()
         if n in infos and not infos[n].unknown
-    }
-    english = {name: en for i in told.values() for name, (_, en) in i.items()}
+    ]
+    english = {name: en for _, i in told for name, (_, en) in i.items()}
     resolved = await _resolve(session, english)
+    merged = {}  # 별칭이 같은 재료(달걀, 계란)나 같은 메뉴의 두 이름은 합친다
+    for dish_id, i in told:
+        for name, (likelihood, _) in i.items():
+            if name in resolved:
+                key = (dish_id, resolved[name])
+                if merged.get(key) != Likelihood.TYPICAL:
+                    merged[key] = likelihood
     rows = [
-        {
-            "dish_id": dish_id,
-            "ingredient_id": resolved[name],
-            "likelihood": likelihood,
-            "source": "llm",
-        }
-        for dish_id, i in told.items()
-        for name, (likelihood, _) in i.items()
-        if name in resolved
+        {"dish_id": d, "ingredient_id": i, "likelihood": lk, "source": "llm"}
+        for (d, i), lk in merged.items()
     ]
     if rows:
         await session.execute(
@@ -235,7 +248,7 @@ def _ingredients(info: DishInfo) -> dict[str, tuple[Likelihood, str]]:
         (Likelihood.POSSIBLE, info.possible),
         (Likelihood.TYPICAL, info.typical),
     ):
-        for item in items[:MAX_INGREDIENTS]:
+        for item in items:
             name = canonical_name(item.name_ko)
             if name and len(name) <= NAME_MAX:
                 result[name] = (

@@ -5,7 +5,7 @@ import pytest_asyncio
 from google.genai import errors
 from sqlalchemy import func, select
 
-from app.common.models import Dish, Ingredient, dish_key
+from app.common.models import Dish, DishAlias, Ingredient, dish_key
 from app.core import llm
 from app.core.config import settings
 from app.domains.scan import dish
@@ -378,3 +378,87 @@ async def test_llm_may_fix_spacing(client, session, scan, monkeypatch):
 
     assert r.status_code == 200
     assert r.json()["menus"][0]["name_en"] == "Mapadububap"
+
+
+@pytest.mark.parametrize("first", ["possible", "typical"])
+@pytest.mark.asyncio
+async def test_alias_keeps_typical(client, session, scan, monkeypatch, first):
+    """달걀과 계란은 같은 재료다. 어느 쪽이 먼저 와도 typical 이 남는다"""
+    await profile(client, session, ["계란"])
+    egg = [("달걀", "Egg")], [("계란", "Egg")]
+    possible, typical = egg if first == "possible" else egg[::-1]
+    llm_knows(
+        monkeypatch,
+        info("계란말이", "Gyeranmari", typical=typical, possible=possible),
+    )
+
+    r = analyze(client, scan, "계란말이")
+
+    assert r.json()["menus"][0]["verdict"] == "avoid"
+
+
+@pytest.mark.asyncio
+async def test_dish_aliases_merge_descriptions(client, session, scan, monkeypatch):
+    """김치찌게(오타)도 김치찌개다. 두 설명 중 한쪽에만 있는 재료도 남는다"""
+    kimchi = await session.scalar(select(Dish).where(Dish.name_ko == "김치찌개"))
+    session.add(DishAlias(dish_id=kimchi.id, alias="김치찌게"))
+    await session.commit()
+    await profile(client, session, ["새우"])
+    llm_knows(monkeypatch, KIMCHI, info("김치찌게", "Kimchijjige"))
+
+    r = analyze(client, scan, "김치찌개", "김치찌게")
+
+    [m] = r.json()["menus"]
+    assert m["verdict"] == "not_sure"
+    assert [q["question_ko"] for q in r.json()["questions"]] == [
+        "이 김치찌개에 새우젓이 들어가나요?"
+    ]
+
+
+def test_duplicate_temp_ids_rejected(client, scan):
+    r = client.post(
+        f"/api/scans/{scan}/analyze",
+        headers=H,
+        json={
+            "items": [
+                {"temp_id": "i1", "raw_name": "새우볶음밥"},
+                {"temp_id": "i1", "raw_name": "공기밥"},
+            ],
+            "selected_temp_ids": ["i1"],
+        },
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_mock_dish_gets_roman_later(client, session, scan, monkeypatch):
+    """mock 으로 만든 메뉴는 로마자 자리에 한국어가 있다. 실제 모델을 부르면 채운다"""
+    await profile(client, session)
+    monkeypatch.setattr(settings, "mock_llm", True)
+    assert analyze(client, scan, "마파두부밥").json()["menus"][0]["name_en"] == (
+        "마파두부밥"
+    )
+
+    monkeypatch.setattr(settings, "mock_llm", False)
+    llm_knows(monkeypatch, info("마파두부밥", "Mapadububap"))
+    assert analyze(client, scan, "마파두부밥").json()["menus"][0]["name_en"] == (
+        "Mapadububap"
+    )
+
+
+@pytest.mark.asyncio
+async def test_long_ingredient_list_is_not_cut(client, session, scan, monkeypatch):
+    """재료가 많아도 자르지 않는다. 잘린 뒤쪽 재료로 safe 가 나오면 안 된다"""
+    await profile(client, session, ["새우"])
+    many = [(f"재료{n}", f"Thing {n}") for n in range(40)]
+    llm_knows(
+        monkeypatch,
+        info(
+            "모둠정식", "Modumjeongsik", possible=many + [("새우젓", "Salted Shrimp")]
+        ),
+    )
+
+    r = analyze(client, scan, "모둠정식")
+
+    assert r.json()["menus"][0]["verdict"] == "not_sure"

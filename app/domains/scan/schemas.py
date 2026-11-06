@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from app.common.schemas import DishBrief, StaffAnswer, Verdict
 from app.domains.restaurant.schemas import MenuMatch
@@ -39,6 +39,14 @@ class AnalyzeRequest(BaseModel):
     selected_temp_ids: list[TempId] = Field(
         min_length=1, max_length=100, examples=[["i1", "i2", "i3"]]
     )
+
+    @field_validator("items")
+    @classmethod
+    def _unique_temp_ids(cls, items: list[AnalyzeItem]) -> list[AnalyzeItem]:
+        ids = [i.temp_id for i in items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("temp_id 가 겹칩니다")
+        return items
 
 
 class AnalyzedMenu(DishBrief):
