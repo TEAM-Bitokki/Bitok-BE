@@ -27,6 +27,12 @@ docker compose exec db createdb -U bitok bitok_test
 python -m pytest
 ```
 
+성분·음식 사전은 AI Hub 관광 음식메뉴판 라벨로 채운다. 원본은 커밋하지 않는다.
+
+```bash
+python -m scripts.seed_dictionary "VL_01. 서울.zip"
+```
+
 ## 구조
 
 ```
@@ -52,6 +58,9 @@ app/
 
 alembic/
 └── versions/            마이그레이션
+
+scripts/
+└── seed_dictionary.py   성분·음식 사전 시드
 
 tests/
 ```

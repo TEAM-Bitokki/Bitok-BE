@@ -1,5 +1,6 @@
 """성분·음식 사전"""
 
+import re
 from datetime import datetime
 
 from sqlalchemy import (
@@ -56,6 +57,11 @@ class IngredientAlias(Base):
     alias: Mapped[str] = mapped_column(String(80), unique=True)
 
     ingredient: Mapped[Ingredient] = relationship(back_populates="aliases")
+
+
+def canonical_name(name: str) -> str:
+    """김치 찌개 → 김치찌개. 시드와 스캔이 같은 규칙을 쓴다"""
+    return re.sub(r"\s+", "", name)
 
 
 class Dish(Base):
