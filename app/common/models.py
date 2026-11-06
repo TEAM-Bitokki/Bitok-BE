@@ -23,7 +23,7 @@ class Ingredient(Base):
     __tablename__ = "ingredients"
 
     id: Mapped[BigPK]
-    name_ko: Mapped[str] = mapped_column(String(80))
+    name_ko: Mapped[str] = mapped_column(String(80), unique=True)
     name_en: Mapped[str] = mapped_column(String(80))
     # 이 성분이 속한 분류. {'crustacean'}
     # 스무 개 남짓 고정이고 읽기만 하므로 배열로 둔다

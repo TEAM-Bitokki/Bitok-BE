@@ -14,10 +14,9 @@ router = APIRouter(prefix="/api/ingredients", tags=["성분"])
     response_model=IngredientSearchResponse,
     summary="알레르기 성분 검색",
     description=(
-        "한국어와 영어를 모두 지원한다. 별칭도 검색된다.\n\n"
-        "새우를 치면 새우, 새우젓이 각각 별개 항목으로 나온다. "
-        "하나를 고른다고 나머지가 자동으로 선택되지 않고, 판정도 고른 성분만 한다.\n\n"
-        "검색 노출 대상으로 표시된 성분만 돌려준다."
+        "기획서의 알레르기 목록 91개만 나온다.\n\n"
+        "한국어, 영어, 별칭 (달걀 -> 계란)으로 검색된다. "
+        "생선, 갑각류, 견과류처럼 분류 이름도 항목으로 있다."
     ),
     responses=responses(UNAUTHORIZED),
 )
