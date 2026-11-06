@@ -1,6 +1,7 @@
 """성분·음식 사전"""
 
 import re
+import unicodedata
 from datetime import datetime
 
 from sqlalchemy import (
@@ -61,7 +62,7 @@ class IngredientAlias(Base):
 
 def canonical_name(name: str) -> str:
     """김치 찌개 → 김치찌개. 시드와 스캔이 같은 규칙을 쓴다"""
-    return re.sub(r"\s+", "", name)
+    return re.sub(r"\s+", "", unicodedata.normalize("NFC", name))
 
 
 class Dish(Base):

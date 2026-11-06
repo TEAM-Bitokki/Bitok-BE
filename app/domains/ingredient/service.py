@@ -1,5 +1,7 @@
 """성분 검색"""
 
+import unicodedata
+
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +20,7 @@ def _rank(text: str | None, q: str) -> int:
 
 
 async def search(session: AsyncSession, q: str, limit: int) -> list[IngredientItem]:
-    q = q.strip().lower()
+    q = unicodedata.normalize("NFC", q).strip().lower()  # DB 는 NFC
     if not q:
         return []
     escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

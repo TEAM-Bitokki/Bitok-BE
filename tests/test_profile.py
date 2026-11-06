@@ -1,5 +1,7 @@
 """성분 검색 식이 프로필"""
 
+import unicodedata
+
 import pytest
 from sqlalchemy import select
 
@@ -44,6 +46,12 @@ def test_search_hides_unlisted_and_wildcards(client, ids):
     assert search(client, "%") == []
 
 
+def test_search_matches_decomposed_hangul(client, ids):
+    """맥 등에서 오는 NFD 입력도 같은 글자로 찾는다"""
+    nfd = unicodedata.normalize("NFD", "새우")
+    assert search(client, nfd)[0]["name_ko"] == "새우"
+
+
 def test_profile_404_before_save(client, ids):
     assert client.get("/api/profiles/me", headers=H).status_code == 404
 
@@ -73,6 +81,17 @@ def test_put_rejects_unlisted_ids(client, ids):
     assert r.status_code == 400
     assert r.json()["error"]["detail"] == {"ingredient_ids": [ids["양념"], 9999]}
     assert client.get("/api/profiles/me", headers=H).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "allergens", [[2**63], [0], list(range(1, 102))], ids=["bigint", "zero", "101개"]
+)
+def test_put_rejects_out_of_range_ids(client, ids, allergens):
+    """DB 에서 터지기 전에 요청 검증에서 막는다"""
+    body = {"allergen_ingredient_ids": allergens, "diet_type": "none"}
+    r = client.put("/api/profiles/me", headers=H, json=body)
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 @pytest.mark.asyncio
