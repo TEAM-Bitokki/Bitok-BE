@@ -62,6 +62,13 @@ class BitokError(HTTPException):
         self.extra = detail
 
 
+def unauthorized() -> BitokError:
+    """인증 실패는 한 가지로만 답한다."""
+    return BitokError(
+        ErrorCode.UNAUTHORIZED, "유효한 deviceToken이 필요합니다.", status_code=401
+    )
+
+
 def _body(code: ErrorCode, message: str, detail: dict[str, Any] | None = None) -> dict:
     return {"error": {"code": code, "message": message, "detail": detail}}
 
