@@ -1,7 +1,6 @@
 """촬영 + 인식"""
 
 import asyncio
-import threading
 from io import BytesIO
 from statistics import median
 
@@ -24,7 +23,7 @@ LOW_CONFIDENCE = 0.5  # 절반 넘는 줄이 이보다 낮으면 사진 자체�
 MAX_PIXELS = (
     20_000_000  # 앱은 긴 변 1600px 로 줄여 보낸다. 폰 원본(1200만)까지는 받는다
 )
-_decoding = threading.BoundedSemaphore(2)  # 서버 메모리 700MB 안에서 동시에 풀 장수
+_decoding = asyncio.Semaphore(2)  # 서버 메모리 700MB 안에서 동시에 풀 장수
 FORMATS = {
     "JPEG": ("jpg", "image/jpeg"),
     "PNG": ("png", "image/png"),
@@ -35,7 +34,7 @@ FORMATS = {
 def image_kind(data: bytes) -> tuple[str, str] | None:
     """앱이 보낸 Content-Type 대신 끝까지 열어본다. 깨진 파일은 여기서 걸린다"""
     try:
-        with _decoding, Image.open(BytesIO(data), formats=list(FORMATS)) as img:
+        with Image.open(BytesIO(data), formats=list(FORMATS)) as img:
             if img.width * img.height > MAX_PIXELS:
                 return None
             img.load()
@@ -47,6 +46,14 @@ def image_kind(data: bytes) -> tuple[str, str] | None:
 def _one_line(text: str) -> str:
     """두 줄에 걸친 메뉴는 모델이 줄바꿈째 준다"""
     return " ".join(text.split())
+
+
+async def _check_image(data: bytes) -> tuple[str, str] | None:
+    """스레드 밖에서 순서를 기다린다. 요청이 취소돼도 디코딩이 끝나야 자리를 내준다"""
+    await _decoding.acquire()
+    decode = asyncio.ensure_future(asyncio.to_thread(image_kind, data))
+    decode.add_done_callback(lambda _: _decoding.release())
+    return await asyncio.shield(decode)
 
 
 async def create_scan(
@@ -64,7 +71,7 @@ async def create_scan(
 
     limit = settings.max_image_mb * 1024 * 1024
     data = await image.read(limit + 1)
-    kind = await asyncio.to_thread(image_kind, data) if len(data) <= limit else None
+    kind = await _check_image(data) if len(data) <= limit else None
     if kind is None:
         raise BitokError(
             ErrorCode.INVALID_IMAGE,

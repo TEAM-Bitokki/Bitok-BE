@@ -1,6 +1,6 @@
 """가입 조회 탈퇴"""
 
-import contextlib
+import logging
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +14,8 @@ from app.domains.auth.schemas import MeResponse
 from app.domains.check.models import MyCheck
 from app.domains.profile.models import DietaryProfile, ProfileAllergen
 from app.domains.scan.models import Scan
+
+log = logging.getLogger(__name__)
 
 
 async def find_user_id(session: AsyncSession, device_token: str) -> int | None:
@@ -82,5 +84,7 @@ async def delete_account(
     await session.execute(delete(User).where(User.id == user_id))
     await session.commit()
     for key in images:  # 탈퇴는 이미 끝났다. 사진 하나 못 지웠다고 실패로 돌리지 않는다
-        with contextlib.suppress(OSError):
+        try:
             await delete_image(key)
+        except OSError as e:
+            log.warning("사진 삭제 실패 %s: %s", key, e)

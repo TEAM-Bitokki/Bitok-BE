@@ -1,6 +1,7 @@
 """메뉴판 촬영 + 인식"""
 
 import asyncio
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.models import Dish
+from app.core import storage
 from app.core.config import settings
 from app.domains.scan import ocr, service
 from app.domains.scan.models import Scan
@@ -242,3 +244,38 @@ def test_delete_account_removes_images(client, user, monkeypatch):
         json={"agree": True, "delete_saved_menus": True},
     )
     assert list(Path(user).rglob("*.jpg")) == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_save_leaves_no_file(tmp_path, monkeypatch):
+    """취소돼도 쓰기 스레드는 끝까지 돈다. 다 쓴 뒤에 지워야 남지 않는다"""
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path))
+    write = Path.write_bytes
+
+    def slow(self, data):
+        time.sleep(0.2)
+        return write(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", slow)
+    task = asyncio.create_task(storage.save_image(b"x", "jpg"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.3)
+    assert list(tmp_path.rglob("*.jpg")) == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_decode_keeps_slot(monkeypatch):
+    """취소된 요청의 디코딩이 끝나기 전에는 자리가 비지 않는다"""
+    monkeypatch.setattr(service, "_decoding", asyncio.Semaphore(1))
+    monkeypatch.setattr(service, "image_kind", lambda data: time.sleep(0.2))
+    task = asyncio.create_task(service._check_image(b""))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert service._decoding.locked()
+    await asyncio.sleep(0.3)
+    assert not service._decoding.locked()
