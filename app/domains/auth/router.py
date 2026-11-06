@@ -1,7 +1,9 @@
 from fastapi import APIRouter, status
 
+from app.core.db import SessionDep
 from app.core.deps import CurrentUser
-from app.core.errors import UNAUTHORIZED, responses
+from app.core.errors import UNAUTHORIZED, BitokError, ErrorCode, responses
+from app.domains.auth import service
 from app.domains.auth.schemas import (
     DeleteAccountRequest,
     MeResponse,
@@ -22,8 +24,8 @@ router = APIRouter(prefix="/api", tags=["계정"])
         "이 엔드포인트만 deviceToken 헤더가 필요 없다."
     ),
 )
-async def sign_up(body: SignUpRequest) -> MeResponse:
-    raise NotImplementedError
+async def sign_up(body: SignUpRequest, session: SessionDep) -> MeResponse:
+    return await service.sign_up(session, body.device_token, body.nickname)
 
 
 @router.get(
@@ -37,8 +39,8 @@ async def sign_up(body: SignUpRequest) -> MeResponse:
     ),
     responses=responses(UNAUTHORIZED),
 )
-async def get_me(user_id: CurrentUser) -> MeResponse:
-    raise NotImplementedError
+async def get_me(user_id: CurrentUser, session: SessionDep) -> MeResponse:
+    return await service.get_me(session, user_id)
 
 
 @router.patch(
@@ -56,12 +58,18 @@ async def update_nickname(body: NicknameRequest, user_id: CurrentUser) -> MeResp
     status_code=status.HTTP_204_NO_CONTENT,
     summary="회원 탈퇴",
     description=(
-        "계정과 식이 프로필을 삭제한다.\n\n"
-        "`delete_saved_menus`\n"
-        "- **true** — 저장한 메뉴와 분석 기록까지 삭제\n"
-        "- **false** — 기록은 남기고 사용자 연결만 끊기\n\n"
+        "계정·식이 프로필·저장한 식당은 삭제된다.\n\n"
+        "`delete_saved_menus` 는 분석 기록만 가른다.\n"
+        "- **false** — 익명화해서 남긴다. 식당 상세·지도에 계속 반영된다\n"
+        "- **true** — 저장한 메뉴와 분석 기록까지 삭제. 식당 상세·지도에서도 사라진다\n\n"
     ),
     responses=responses(UNAUTHORIZED, (400, "재확인 없이 호출")),
 )
-async def delete_account(body: DeleteAccountRequest, user_id: CurrentUser) -> None:
-    raise NotImplementedError
+async def delete_account(
+    body: DeleteAccountRequest, user_id: CurrentUser, session: SessionDep
+) -> None:
+    if not body.agree:
+        raise BitokError(
+            ErrorCode.VALIDATION_ERROR, "탈퇴 동의가 필요합니다.", status_code=400
+        )
+    await service.delete_account(session, user_id, body.delete_saved_menus)

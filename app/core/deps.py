@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import Depends
 from fastapi.security import APIKeyHeader
 
+from app.core.db import SessionDep
 from app.core.errors import BitokError, ErrorCode
 
 device_token_scheme = APIKeyHeader(
@@ -30,8 +31,9 @@ def canonical_uuid4(value: str | None) -> str | None:
 _UNAUTHORIZED_MESSAGE = "유효한 deviceToken이 필요합니다."
 
 
-async def get_current_user_id(device_token: DeviceToken) -> int:
+async def get_current_user_id(device_token: DeviceToken, session: SessionDep) -> int:
     """토큰으로 users 조회."""
+    from app.domains.auth.service import find_user_id
 
     def unauthorized() -> BitokError:
         return BitokError(
@@ -42,8 +44,10 @@ async def get_current_user_id(device_token: DeviceToken) -> int:
     if token is None:
         raise unauthorized()
 
-    # TODO: sha256(token) 으로 users 조회
-    raise unauthorized()
+    user_id = await find_user_id(session, token)
+    if user_id is None:
+        raise unauthorized()
+    return user_id
 
 
 CurrentUser = Annotated[int, Depends(get_current_user_id)]
