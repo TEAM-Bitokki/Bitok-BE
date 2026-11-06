@@ -75,16 +75,19 @@ async def test_scan_reads_menu_and_saves(client, session, user, monkeypatch):
         MenuItem(raw_name="김치 찌개", name_en="Kimchi Stew", confidence=0.9),
         MenuItem(raw_name="사장님특제", name_en="Sajangnim Teukje", confidence=0.6),
         MenuItem(raw_name="공기밥", name_en="  ", confidence=0.9),
+        MenuItem(raw_name="에그햄 샌드위치\n+샐러드", name_en="A\nB", confidence=0.9),
     )
 
     r = upload(client)
 
     assert r.status_code == 201
     items = r.json()["items"]
-    assert [i["temp_id"] for i in items] == ["i1", "i2", "i3"]
+    assert [i["temp_id"] for i in items] == ["i1", "i2", "i3", "i4"]
     assert items[0]["name_en"] == "Kimchijjigae"  # 사전 표기가 이긴다
     assert items[1]["name_en"] == "Sajangnim Teukje"
     assert items[2]["name_en"] is None  # 빈 로마자는 비워서 보낸다
+    assert items[3]["raw_name"] == "에그햄 샌드위치 +샐러드"
+    assert items[3]["name_en"] == "A B"
 
     scan = await session.scalar(select(Scan))
     assert scan.raw_ocr["items"][0]["raw_name"] == "김치 찌개"
@@ -142,11 +145,11 @@ def test_unknown_restaurant_404(client, user, monkeypatch):
     assert upload(client, restaurant_id="999").status_code == 404
 
 
-def test_llm_timeout_retries_once(client, user, monkeypatch):
+def test_llm_timeout_falls_back(client, user, monkeypatch):
     calls = []
 
-    async def slow(image, mime):
-        calls.append(1)
+    async def slow(image, mime, model):
+        calls.append(model)
         await asyncio.sleep(10)
 
     monkeypatch.setattr(settings, "llm_timeout_sec", 0.05)
@@ -154,7 +157,24 @@ def test_llm_timeout_retries_once(client, user, monkeypatch):
     r = upload(client)
     assert r.status_code == 504
     assert r.json()["error"]["code"] == "LLM_TIMEOUT"
-    assert len(calls) == 2
+    assert calls == [settings.gemini_model, settings.gemini_fallback_model]
+
+
+def test_fallback_model_answers(client, user, monkeypatch):
+    """기본 모델이 503 이어도 예비 모델이 읽으면 성공이다"""
+
+    async def busy(image, mime, model):
+        if model == settings.gemini_model:
+            raise errors.ServerError(503, {"error": {"message": "high demand"}})
+        return MenuExtraction(
+            items=[MenuItem(raw_name="국밥", name_en="Gukbap", confidence=0.9)],
+            image_quality="ok",
+        )
+
+    monkeypatch.setattr(ocr, "_call", busy)
+    r = upload(client)
+    assert r.status_code == 201
+    assert r.json()["items"][0]["raw_name"] == "국밥"
 
 
 def test_mock_llm_needs_no_key(client, user, monkeypatch):
@@ -183,7 +203,7 @@ def test_llm_errors_retry_only_transient(client, user, monkeypatch, error, tries
     """키가 틀린 건 다시 불러도 같고, 요청 제한·연결 끊김은 풀릴 수 있다"""
     calls = []
 
-    async def fail(image, mime):
+    async def fail(image, mime, model):
         calls.append(1)
         raise error
 

@@ -1,6 +1,7 @@
 """메뉴판 인식 (Gemini)"""
 
 import asyncio
+import logging
 from functools import cache
 from typing import Literal
 
@@ -70,6 +71,8 @@ class MenuExtraction(BaseModel):
     )
 
 
+log = logging.getLogger(__name__)
+
 MOCK = MenuExtraction(
     items=[
         MenuItem(raw_name="김치찌개", name_en="Kimchijjigae", confidence=0.96),
@@ -82,13 +85,19 @@ MOCK = MenuExtraction(
 
 @cache
 def _client() -> genai.Client:
-    return genai.Client(api_key=settings.gemini_api_key)
+    # SDK 는 안에서 최대 5번 다시 부른다. 재시도는 extract_menu 가 정한다
+    return genai.Client(
+        api_key=settings.gemini_api_key,
+        http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(attempts=1)
+        ),
+    )
 
 
-async def _call(image: bytes, mime: str) -> MenuExtraction:
+async def _call(image: bytes, mime: str, model: str) -> MenuExtraction:
     # Gemini 3.6 이상은 temperature 를 무시하고, 넣으면 앞으로 400 이 날 수 있다
     r = await _client().aio.models.generate_content(
-        model=settings.gemini_model,
+        model=model,
         contents=[types.Part.from_bytes(data=image, mime_type=mime), TASK],
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM,
@@ -108,20 +117,30 @@ def _unavailable() -> BitokError:
 
 
 async def extract_menu(image: bytes, mime: str) -> MenuExtraction:
-    """일시적인 실패만 바로 한 번 다시 부른다. 사용자가 화면에서 기다리는 중이다"""
+    """붐비거나 늦으면 예비 모델로 한 번 넘어간다. 사용자가 화면에서 기다리는 중이다"""
     if settings.mock_llm:
         return MOCK
-    for _ in range(2):
+    for model in (settings.gemini_model, settings.gemini_fallback_model):
         try:
-            return await asyncio.wait_for(_call(image, mime), settings.llm_timeout_sec)
+            return await asyncio.wait_for(
+                _call(image, mime, model), settings.llm_timeout_sec
+            )
         except errors.ClientError as e:
+            log.warning("%s 실패: %s", model, e)
             if e.code != 429:  # 429 만 풀릴 수 있다. 나머지는 키·요청 문제
                 raise _unavailable() from e
             error = _unavailable()
         except TimeoutError:
+            log.warning("%s %s초 안에 응답 없음", model, settings.llm_timeout_sec)
             error = BitokError(
                 ErrorCode.LLM_TIMEOUT, "모델 응답이 너무 늦습니다.", status_code=504
             )
-        except (errors.APIError, httpx.TransportError, ValidationError, ValueError):
+        except (
+            errors.APIError,
+            httpx.TransportError,
+            ValidationError,
+            ValueError,
+        ) as e:
+            log.warning("%s 실패: %r", model, e)
             error = _unavailable()
     raise error

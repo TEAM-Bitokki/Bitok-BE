@@ -44,6 +44,11 @@ def image_kind(data: bytes) -> tuple[str, str] | None:
         return None
 
 
+def _one_line(text: str) -> str:
+    """두 줄에 걸친 메뉴는 모델이 줄바꿈째 준다"""
+    return " ".join(text.split())
+
+
 async def create_scan(
     session: AsyncSession,
     user_id: int,
@@ -71,7 +76,13 @@ async def create_scan(
 
     await session.rollback()  # 모델을 기다리는 동안 DB 커넥션을 잡고 있지 않게
     result = await extract_menu(data, kind[1])
-    items = [i for i in result.items if i.raw_name.strip()]
+    items = [
+        i.model_copy(
+            update={"raw_name": _one_line(i.raw_name), "name_en": _one_line(i.name_en)}
+        )
+        for i in result.items
+    ]
+    items = [i for i in items if i.raw_name]
     if not items:
         raise BitokError(ErrorCode.NO_MENU_DETECTED, "메뉴를 찾지 못했습니다.", 422)
     if median(i.confidence for i in items) < LOW_CONFIDENCE:
@@ -92,8 +103,8 @@ async def create_scan(
     recognized = [
         RecognizedItem(
             temp_id=f"i{n}",
-            raw_name=i.raw_name.strip(),
-            name_en=known.get(canonical_name(i.raw_name)) or i.name_en.strip() or None,
+            raw_name=i.raw_name,
+            name_en=known.get(canonical_name(i.raw_name)) or i.name_en or None,
             confidence=round(i.confidence, 2),
         )
         for n, i in enumerate(items, 1)

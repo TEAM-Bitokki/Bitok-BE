@@ -15,7 +15,8 @@ class Settings(BaseSettings):
 
     # 외부 서비스
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_fallback_model: str = "gemini-3.6-flash"  # 기본 모델이 붐빌 때
     kakao_rest_api_key: str = ""
 
     # AI 동작
