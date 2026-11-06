@@ -5,6 +5,7 @@ import asyncio
 from pydantic import BaseModel, Field
 
 from app.common.dictionary import SEARCHABLE
+from app.common.models import canonical_name
 from app.core import llm
 from app.core.config import settings
 
@@ -66,14 +67,16 @@ class DishInfos(BaseModel):
     dishes: list[DishInfo] = Field(description="받은 메뉴 순서대로 하나씩")
 
 
-async def _describe(names: list[str]) -> list[DishInfo]:
+async def _describe(names: list[str]) -> dict[str, DishInfo]:
     def check(result: DishInfos) -> None:
-        if [d.name for d in result.dishes] != names:
+        if [canonical_name(d.name) for d in result.dishes] != [
+            canonical_name(n) for n in names
+        ]:
             raise ValueError("받은 메뉴와 답한 메뉴가 다르다")
 
     task = "이 메뉴들의 재료를 알려줘.\n" + "\n".join(f"메뉴: {n}" for n in names)
     result = await llm.generate(SYSTEM, [task], DishInfos, check)
-    return result.dishes
+    return dict(zip(names, result.dishes, strict=True))
 
 
 async def describe_dishes(names: list[str]) -> dict[str, DishInfo]:
@@ -82,4 +85,4 @@ async def describe_dishes(names: list[str]) -> dict[str, DishInfo]:
         return {}
     batches = [names[i : i + BATCH] for i in range(0, len(names), BATCH)]
     results = await asyncio.gather(*(_describe(b) for b in batches))
-    return {info.name: info for infos in results for info in infos}
+    return {name: info for infos in results for name, info in infos.items()}

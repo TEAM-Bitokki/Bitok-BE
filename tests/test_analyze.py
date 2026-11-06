@@ -38,7 +38,7 @@ def llm_knows(monkeypatch, *infos):
 
     async def fake(names):
         calls.append(names)
-        return [known[n] for n in names]
+        return {n: known[n] for n in names}
 
     monkeypatch.setattr(dish, "_describe", fake)
     return calls
@@ -363,3 +363,18 @@ async def test_seafood_asks_plainly_for_vegan(client, session, scan, monkeypatch
     assert [q["question_ko"] for q in r.json()["questions"]] == [
         "이 해물파전에 해산물이 들어가나요?"
     ]
+
+
+@pytest.mark.asyncio
+async def test_llm_may_fix_spacing(client, session, scan, monkeypatch):
+    """모델이 띄어쓰기를 고쳐서 답해도 같은 메뉴로 본다"""
+    await profile(client, session)
+
+    async def spaced(model, system, contents, schema):
+        return DishInfos(dishes=[info("마파두부밥", "Mapadububap")])
+
+    monkeypatch.setattr(llm, "_call", spaced)
+    r = analyze(client, scan, "마파 두부밥")
+
+    assert r.status_code == 200
+    assert r.json()["menus"][0]["name_en"] == "Mapadububap"
