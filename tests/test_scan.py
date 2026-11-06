@@ -157,15 +157,16 @@ def test_mock_llm_needs_no_key(client, user, monkeypatch):
     ]
 
 
-def test_client_error_is_not_retried(client, user, monkeypatch):
-    """키가 틀린 것 같은 문제는 다시 불러도 같다"""
+@pytest.mark.parametrize("code,tries", [(400, 1), (429, 2)])
+def test_client_error_retries_only_rate_limit(client, user, monkeypatch, code, tries):
+    """키가 틀린 건 다시 불러도 같고, 요청 제한은 풀릴 수 있다"""
     calls = []
 
-    async def bad_key(image, mime):
+    async def fail(image, mime):
         calls.append(1)
-        raise errors.ClientError(400, {"error": {"message": "API key not valid"}})
+        raise errors.ClientError(code, {"error": {"message": "x"}})
 
-    monkeypatch.setattr(ocr, "_call", bad_key)
+    monkeypatch.setattr(ocr, "_call", fail)
     r = upload(client)
     assert r.status_code == 502
-    assert len(calls) == 1
+    assert len(calls) == tries

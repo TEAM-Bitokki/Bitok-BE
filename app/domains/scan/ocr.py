@@ -113,8 +113,10 @@ async def extract_menu(image: bytes, mime: str) -> MenuExtraction:
     for _ in range(2):
         try:
             return await asyncio.wait_for(_call(image, mime), settings.llm_timeout_sec)
-        except errors.ClientError as e:  # 키·요청 문제라 다시 불러도 같다
-            raise _unavailable() from e
+        except errors.ClientError as e:
+            if e.code != 429:  # 429 만 풀릴 수 있다. 나머지는 키·요청 문제
+                raise _unavailable() from e
+            error = _unavailable()
         except TimeoutError:
             error = BitokError(
                 ErrorCode.LLM_TIMEOUT, "모델 응답이 너무 늦습니다.", status_code=504
