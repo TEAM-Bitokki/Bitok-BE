@@ -1,5 +1,6 @@
 """성분·음식 사전"""
 
+import re
 from datetime import datetime
 
 from sqlalchemy import (
@@ -22,7 +23,7 @@ class Ingredient(Base):
     __tablename__ = "ingredients"
 
     id: Mapped[BigPK]
-    name_ko: Mapped[str] = mapped_column(String(80))
+    name_ko: Mapped[str] = mapped_column(String(80), unique=True)
     name_en: Mapped[str] = mapped_column(String(80))
     # 이 성분이 속한 분류. {'crustacean'}
     # 스무 개 남짓 고정이고 읽기만 하므로 배열로 둔다
@@ -56,6 +57,11 @@ class IngredientAlias(Base):
     alias: Mapped[str] = mapped_column(String(80), unique=True)
 
     ingredient: Mapped[Ingredient] = relationship(back_populates="aliases")
+
+
+def canonical_name(name: str) -> str:
+    """김치 찌개 → 김치찌개. 시드와 스캔이 같은 규칙을 쓴다"""
+    return re.sub(r"\s+", "", name)
 
 
 class Dish(Base):

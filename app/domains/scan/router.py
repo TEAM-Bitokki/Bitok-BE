@@ -35,6 +35,7 @@ router = APIRouter(prefix="/api/scans", tags=["스캔/분석"])
         "| `PROFILE_REQUIRED` | 식이 프로필이 없음 |\n"
         "| `LLM_UNAVAILABLE` · `LLM_TIMEOUT` | LLM오류 |\n\n"
         "### 추가 고려사항\n\n"
+        "- `items[].name_en` — 로마자 표기. 번역 아님 (불고기 → Bulgogi)\n"
         "- `items[].confidence` — 0.7 미만이면 살짝 못 믿김...\n"
         "- `items[].temp_id` — 이 스캔 안에서만 쓰는 임시 id. 무시하세요.\n"
         "- `image_quality` — ok, blurry, cropped 셋 중 하나. "

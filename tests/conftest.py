@@ -45,6 +45,7 @@ async def _clean_db():
     global _created
     async with engine.begin() as conn:
         if not _created:
+            await conn.run_sync(Base.metadata.drop_all)  # 모델이 바뀌어도 맞춰지게
             await conn.run_sync(Base.metadata.create_all)
             _created = True
         await conn.execute(text(f"TRUNCATE {_TABLES} RESTART IDENTITY CASCADE"))
