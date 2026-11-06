@@ -68,7 +68,7 @@ async def generate[T: BaseModel](
             return result
         except errors.ClientError as e:
             log.warning("%s 실패: %s", model, e)
-            if e.code != 429:  # 429 만 풀릴 수 있다. 나머지는 키, 요청 문제
+            if e.code not in (404, 429):  # 모델이 없거나 붐빈다. 나머지는 키, 요청 문제
                 raise _unavailable() from e
             error = _unavailable()
         except TimeoutError:

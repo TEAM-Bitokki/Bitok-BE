@@ -197,9 +197,10 @@ def test_mock_llm_needs_no_key(client, user, monkeypatch):
     [
         (errors.ClientError(400, {"error": {"message": "key"}}), 1),
         (errors.ClientError(429, {"error": {"message": "rate"}}), 2),
+        (errors.ClientError(404, {"error": {"message": "no model"}}), 2),
         (httpx.ConnectError("down"), 2),
     ],
-    ids=["400", "429", "연결 끊김"],
+    ids=["400", "429", "모델 없음", "연결 끊김"],
 )
 def test_llm_errors_retry_only_transient(client, user, monkeypatch, error, tries):
     """키가 틀린 건 다시 불러도 같고, 요청 제한, 연결 끊김은 풀릴 수 있다"""

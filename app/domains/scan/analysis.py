@@ -21,6 +21,7 @@ from app.common.models import (
 from app.common.schemas import Likelihood, MatchStatus, Verdict
 from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
+from app.domains.profile.models import DietaryProfile
 from app.domains.scan import judge as judging
 from app.domains.scan.dish import DishInfo, describe_dishes
 from app.domains.scan.judge import Rules, load_rules, status
@@ -83,6 +84,16 @@ async def analyze(
     )
     if await session.scalar(locked) is None:  # 같은 스캔을 두 번 보내면 차례로
         raise BitokError(ErrorCode.NOT_FOUND, "없는 스캔입니다.", 404)
+    await session.execute(
+        select(DietaryProfile.id)
+        .where(DietaryProfile.user_id == user_id)
+        .with_for_update(read=True)
+    )
+    rules = await load_rules(session, user_id)
+    if rules is None:
+        raise BitokError(
+            ErrorCode.PROFILE_REQUIRED, "식이 프로필을 먼저 저장하세요.", 422
+        )
     dish_ids = await _save_dishes(session, menus, found, infos)
     order = list(dict.fromkeys(dish_ids[k] for k in menus))
     dishes = {
@@ -200,11 +211,15 @@ async def _save_dishes(
         await session.execute(
             update(Dish).where(Dish.id.in_(described)).values(described_at=now)
         )
-    for dish_id, n in described.items():
+    for k, n in menus.items():
+        if n not in infos:
+            continue
+        # mock 으로 만들어 로마자 자리에 한국어가 들어간 메뉴만 채운다. 별칭 이름으로는 안 바꾼다
         await session.execute(
             update(Dish)
             .where(
-                Dish.id == dish_id,
+                Dish.id == dish_ids[k],
+                Dish.canonical_name == k,
                 Dish.name_en == Dish.name_ko,
                 Dish.verified.is_(False),
             )
@@ -250,11 +265,10 @@ def _ingredients(info: DishInfo) -> dict[str, tuple[Likelihood, str]]:
     ):
         for item in items:
             name = canonical_name(item.name_ko)
-            if name and len(name) <= NAME_MAX:
-                result[name] = (
-                    Likelihood.POSSIBLE if name in GENERIC else likelihood,
-                    item.name_en.strip()[:NAME_MAX] or name,
-                )
+            result[name] = (
+                Likelihood.POSSIBLE if name in GENERIC else likelihood,
+                item.name_en.strip()[:NAME_MAX] or name,
+            )
     return result
 
 

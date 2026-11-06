@@ -8,11 +8,13 @@ from sqlalchemy import func, select
 from app.common.models import Dish, DishAlias, Ingredient, dish_key
 from app.core import llm
 from app.core.config import settings
+from app.domains.profile.models import DietaryProfile, ProfileAllergen
 from app.domains.scan import dish
 from app.domains.scan.dish import DishInfo, DishInfos, IngredientName
 from app.domains.scan.judge import Rules, judge
 from app.domains.scan.models import Analysis, Scan, StaffQuestion
 from scripts.seed_dictionary import build, seed
+from tests.conftest import TestSessionMaker
 from tests.test_seed import menu
 
 V4 = "550e8400-e29b-41d4-a716-446655440000"
@@ -250,19 +252,34 @@ async def test_llm_wrong_menu_uses_fallback(client, session, scan, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "body",
+    "body,code",
     [
-        {"items": [{"temp_id": "i1", "raw_name": "국밥"}], "selected_temp_ids": ["i9"]},
-        {"items": [{"temp_id": "i1", "raw_name": "  "}], "selected_temp_ids": ["i1"]},
-        {"items": [{"temp_id": "i1", "raw_name": "국밥"}], "selected_temp_ids": []},
+        (
+            {
+                "items": [{"temp_id": "i1", "raw_name": "국밥"}],
+                "selected_temp_ids": ["i9"],
+            },
+            400,
+        ),
+        (
+            {
+                "items": [{"temp_id": "i1", "raw_name": "  "}],
+                "selected_temp_ids": ["i1"],
+            },
+            422,
+        ),
+        (
+            {"items": [{"temp_id": "i1", "raw_name": "국밥"}], "selected_temp_ids": []},
+            422,
+        ),
     ],
     ids=["없는 항목", "빈 이름", "고른 게 없음"],
 )
 @pytest.mark.asyncio
-async def test_analyze_rejects_bad_body(client, session, scan, body):
+async def test_analyze_rejects_bad_body(client, session, scan, body, code):
     await profile(client, session)
     r = client.post(f"/api/scans/{scan}/analyze", headers=H, json=body)
-    assert r.status_code in (400, 422)
+    assert r.status_code == code
     assert r.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
@@ -462,3 +479,77 @@ async def test_long_ingredient_list_is_not_cut(client, session, scan, monkeypatc
     r = analyze(client, scan, "모둠정식")
 
     assert r.json()["menus"][0]["verdict"] == "not_sure"
+
+
+@pytest.mark.asyncio
+async def test_broth_may_hide_shrimp(client, session, scan, monkeypatch):
+    """새우 육수도 있다"""
+    await profile(client, session, ["새우"])
+    llm_knows(monkeypatch, info("짬뽕", "Jjamppong", possible=[("육수", "Broth")]))
+
+    r = analyze(client, scan, "짬뽕")
+
+    assert [q["question_ko"] for q in r.json()["questions"]] == [
+        "이 짬뽕의 육수에 새우가 들어가나요?"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_too_long_ingredient_uses_fallback(client, session, scan, monkeypatch):
+    """저장할 수 없는 재료 이름이 오면 버리지 않고 예비 모델에 다시 묻는다"""
+    await profile(client, session, ["새우"])
+    models = []
+
+    async def long(model, system, contents, schema):
+        models.append(model)
+        name = "새우" * 50 if model == settings.gemini_model else "새우젓"
+        return DishInfos(
+            dishes=[info("볶음밥", "Bokkeumbap", possible=[(name, "Shrimp")])]
+        )
+
+    monkeypatch.setattr(llm, "_call", long)
+    r = analyze(client, scan, "볶음밥")
+
+    assert models == [settings.gemini_model, settings.gemini_fallback_model]
+    assert r.json()["menus"][0]["verdict"] == "not_sure"
+
+
+@pytest.mark.asyncio
+async def test_profile_changed_while_waiting(client, session, scan, monkeypatch):
+    """모델을 기다리는 동안 새우 알레르기를 추가하면 새 프로필로 판정한다"""
+    await profile(client, session)
+    shrimp = await session.scalar(
+        select(Ingredient.id).where(Ingredient.name_ko == "새우")
+    )
+
+    async def slow(names):
+        async with TestSessionMaker() as other:
+            p = await other.scalar(select(DietaryProfile))
+            other.add(ProfileAllergen(profile_id=p.id, ingredient_id=shrimp))
+            await other.commit()
+        return {"김치찌개": KIMCHI}
+
+    monkeypatch.setattr(dish, "_describe", slow)
+    r = analyze(client, scan, "김치찌개")
+
+    assert r.json()["menus"][0]["verdict"] == "not_sure"
+
+
+@pytest.mark.asyncio
+async def test_alias_does_not_rename_dish(client, session, scan, monkeypatch):
+    """별칭 이름의 로마자로 원래 메뉴 표기를 바꾸지 않는다"""
+    d = Dish(canonical_name="마파두부밥", name_ko="마파두부밥", name_en="마파두부밥")
+    session.add(d)
+    await session.flush()
+    session.add(DishAlias(dish_id=d.id, alias="마파두부덮밥"))
+    await session.commit()
+    await profile(client, session)
+    llm_knows(
+        monkeypatch,
+        info("마파두부밥", "Mapadububap"),
+        info("마파두부덮밥", "Mapadubudeopbap"),
+    )
+
+    r = analyze(client, scan, "마파두부덮밥", "마파두부밥")
+
+    assert r.json()["menus"][0]["name_en"] == "Mapadububap"

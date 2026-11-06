@@ -239,7 +239,7 @@ TAG_EXACT = {
     "조개류": {"shellfish"},
     "오리알": {"egg"},
     "젤라틴": {"meat"},
-    "육수": {"meat", "fish"},
+    "육수": {"meat", "fish", "shellfish", "crustacean"},
     "해산물": {"fish", "shellfish", "crustacean"},
     "알": {"fish"},
     "오리": {"meat"},

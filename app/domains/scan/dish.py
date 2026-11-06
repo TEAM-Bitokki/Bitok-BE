@@ -5,11 +5,12 @@ import asyncio
 from pydantic import BaseModel, Field
 
 from app.common.dictionary import SEARCHABLE
-from app.common.models import canonical_name
+from app.common.models import Ingredient, canonical_name
 from app.core import llm
 from app.core.config import settings
 
 BATCH = 10
+NAME_MAX = Ingredient.__table__.c.name_ko.type.length
 
 SYSTEM = f"""<역할>
 너는 한국 음식의 재료를 안다. 결과는 한국에 온 외국인이 알레르기와 식단을 확인하는 앱에서
@@ -73,6 +74,10 @@ async def _describe(names: list[str]) -> dict[str, DishInfo]:
             canonical_name(n) for n in names
         ]:
             raise ValueError("받은 메뉴와 답한 메뉴가 다르다")
+        for d in result.dishes:
+            for i in d.typical + d.possible:
+                if not 0 < len(canonical_name(i.name_ko)) <= NAME_MAX:
+                    raise ValueError(f"재료 이름을 저장할 수 없다: {i.name_ko!r}")
 
     task = "이 메뉴들의 재료를 알려줘.\n" + "\n".join(f"메뉴: {n}" for n in names)
     result = await llm.generate(SYSTEM, [task], DishInfos, check)
