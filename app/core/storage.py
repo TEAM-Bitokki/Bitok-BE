@@ -15,3 +15,8 @@ async def save_image(data: bytes, ext: str) -> str:
     await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
     await asyncio.to_thread(path.write_bytes, data)
     return key
+
+
+async def delete_image(key: str) -> None:
+    path = Path(settings.upload_dir) / key
+    await asyncio.to_thread(path.unlink, missing_ok=True)

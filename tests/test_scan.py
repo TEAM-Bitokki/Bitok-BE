@@ -1,8 +1,11 @@
 """메뉴판 촬영 + 인식"""
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from google.genai import errors
+from PIL import Image
 from sqlalchemy import select
 
 from app.common.models import Dish
@@ -13,7 +16,16 @@ from app.domains.scan.ocr import MenuExtraction, MenuItem
 
 V4 = "550e8400-e29b-41d4-a716-446655440000"
 H = {"deviceToken": V4}
-JPEG = b"\xff\xd8\xff\xe0" + b"0" * 100
+
+
+def jpeg(size=64) -> bytes:
+    buf = BytesIO()
+    Image.effect_noise((size, size), 64).convert("RGB").save(buf, "JPEG")
+    return buf.getvalue()
+
+
+JPEG = jpeg()
+BROKEN = jpeg(400)[:20_000]  # 헤더는 멀쩡하고 뒤가 잘림
 
 
 @pytest.fixture
@@ -67,7 +79,11 @@ async def test_scan_reads_menu_and_saves(client, session, user, monkeypatch):
     assert (Path(user) / scan.image_url).read_bytes() == JPEG
 
 
-@pytest.mark.parametrize("data", [b"not an image", JPEG + b"0" * 1024 * 1024])
+@pytest.mark.parametrize(
+    "data",
+    [b"not an image", BROKEN, JPEG + b"0" * 1024 * 1024],
+    ids=["텍스트", "깨진 JPEG", "1MB 초과"],
+)
 def test_scan_rejects_bad_image(client, user, monkeypatch, data):
     monkeypatch.setattr(settings, "max_image_mb", 1)
     r = upload(client, data)
@@ -139,3 +155,17 @@ def test_mock_llm_needs_no_key(client, user, monkeypatch):
         "된장찌개",
         "제육볶음",
     ]
+
+
+def test_client_error_is_not_retried(client, user, monkeypatch):
+    """키가 틀린 것 같은 문제는 다시 불러도 같다"""
+    calls = []
+
+    async def bad_key(image, mime):
+        calls.append(1)
+        raise errors.ClientError(400, {"error": {"message": "API key not valid"}})
+
+    monkeypatch.setattr(ocr, "_call", bad_key)
+    r = upload(client)
+    assert r.status_code == 502
+    assert len(calls) == 1

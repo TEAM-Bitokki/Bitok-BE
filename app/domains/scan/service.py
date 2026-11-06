@@ -1,15 +1,18 @@
 """촬영 + 인식"""
 
+import asyncio
+from io import BytesIO
 from statistics import median
 
 from fastapi import UploadFile
+from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.models import Dish, canonical_name
 from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
-from app.core.storage import save_image
+from app.core.storage import delete_image, save_image
 from app.domains.profile.models import DietaryProfile
 from app.domains.restaurant.models import Restaurant
 from app.domains.scan.models import Scan
@@ -17,17 +20,21 @@ from app.domains.scan.ocr import extract_menu
 from app.domains.scan.schemas import RecognizedItem, ScanResponse
 
 LOW_CONFIDENCE = 0.5  # 절반 넘는 줄이 이보다 낮으면 사진 자체가 흐린 것
+FORMATS = {
+    "JPEG": ("jpg", "image/jpeg"),
+    "PNG": ("png", "image/png"),
+    "WEBP": ("webp", "image/webp"),
+}
 
 
 def image_kind(data: bytes) -> tuple[str, str] | None:
-    """앱이 보낸 Content-Type 대신 파일 앞부분을 본다"""
-    if data.startswith(b"\xff\xd8\xff"):
-        return "jpg", "image/jpeg"
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "png", "image/png"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "webp", "image/webp"
-    return None
+    """앱이 보낸 Content-Type 대신 끝까지 열어본다. 깨진 파일은 여기서 걸린다"""
+    try:
+        with Image.open(BytesIO(data)) as img:
+            img.load()
+            return FORMATS.get(img.format)
+    except Exception:
+        return None
 
 
 async def create_scan(
@@ -45,8 +52,8 @@ async def create_scan(
 
     limit = settings.max_image_mb * 1024 * 1024
     data = await image.read(limit + 1)
-    kind = image_kind(data)
-    if kind is None or len(data) > limit:
+    kind = await asyncio.to_thread(image_kind, data) if len(data) <= limit else None
+    if kind is None:
         raise BitokError(
             ErrorCode.INVALID_IMAGE,
             f"{settings.max_image_mb}MB 이하의 JPEG PNG WEBP 만 올릴 수 있습니다.",
@@ -87,14 +94,18 @@ async def create_scan(
     scan = Scan(
         user_id=user_id,
         restaurant_id=restaurant_id,
-        image_url=await save_image(data, kind[0]),
+        image_url=(key := await save_image(data, kind[0])),
         raw_ocr={
             "items": [r.model_dump() for r in recognized],
             "image_quality": result.image_quality,
         },
     )
     session.add(scan)
-    await session.commit()
+    try:
+        await session.commit()
+    except Exception:
+        await delete_image(key)
+        raise
 
     return ScanResponse(
         scan_id=scan.id,
