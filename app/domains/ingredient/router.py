@@ -31,6 +31,7 @@ async def search_ingredients(
         str,
         Query(
             min_length=1,
+            max_length=80,
             description="검색어(한국어 영어)",
             examples=["새우"],
         ),
