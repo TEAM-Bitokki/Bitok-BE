@@ -1,9 +1,11 @@
-"""가입 조회 탈퇴"""
+"""가입·조회·탈퇴"""
 
 import pytest
 from sqlalchemy import select
 
+from app.core.errors import BitokError
 from app.core.security import hash_token
+from app.domains.auth import service
 from app.domains.auth.models import User
 from app.models import Analysis, Dish, MyCheck, Restaurant, Scan
 
@@ -47,6 +49,36 @@ async def test_token_is_stored_hashed(client, session):
     assert stored == hash_token(V4)
 
 
+@pytest.mark.asyncio
+async def test_sign_up_survives_concurrent_insert(client, session, monkeypatch):
+    """같은 토큰이 동시에 가입해도 500 이 아니라 기존 계정을 돌려준다"""
+    existing = User(device_token=hash_token(V4))
+    session.add(existing)
+    await session.commit()
+
+    real = service.find_user_id
+    calls = {"n": 0}
+
+    async def first_lookup_misses(*args):
+        """조회를 지난 직후 다른 요청이 먼저 넣은 상황"""
+        calls["n"] += 1
+        return None if calls["n"] == 1 else await real(*args)
+
+    monkeypatch.setattr(service, "find_user_id", first_lookup_misses)
+
+    r = client.post("/api/auth/sign-up", json={"device_token": V4})
+    assert r.status_code == 200
+    assert r.json()["user_id"] == existing.id
+
+
+@pytest.mark.asyncio
+async def test_get_me_401s_when_account_is_gone(session):
+    """인증을 지난 뒤 다른 요청이 탈퇴시킨 경우"""
+    with pytest.raises(BitokError) as caught:
+        await service.get_me(session, 999)
+    assert caught.value.status_code == 401
+
+
 def test_me_requires_registered_token(client):
     assert client.get("/api/auth/me", headers=H).status_code == 401
     client.post("/api/auth/sign-up", json={"device_token": V4})
@@ -70,15 +102,11 @@ def test_delete_removes_account(client):
 @pytest.mark.asyncio
 async def test_delete_keeps_public_records(client, session):
     """delete_saved_menus=false 면 기록이 익명화되어 남는다"""
-    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()[
-        "user_id"
-    ]
+    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()["user_id"]
     await _seed_records(session, user_id)
 
     client.request(
-        "DELETE",
-        "/api/users/me",
-        headers=H,
+        "DELETE", "/api/users/me", headers=H,
         json={"agree": True, "delete_saved_menus": False},
     )
 
@@ -91,15 +119,11 @@ async def test_delete_keeps_public_records(client, session):
 @pytest.mark.asyncio
 async def test_delete_can_remove_records(client, session):
     """delete_saved_menus=true 면 분석 기록까지 사라진다"""
-    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()[
-        "user_id"
-    ]
+    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()["user_id"]
     await _seed_records(session, user_id)
 
     client.request(
-        "DELETE",
-        "/api/users/me",
-        headers=H,
+        "DELETE", "/api/users/me", headers=H,
         json={"agree": True, "delete_saved_menus": True},
     )
 
@@ -111,35 +135,28 @@ async def test_delete_can_remove_records(client, session):
 @pytest.mark.asyncio
 async def test_delete_removes_checks_on_others_analysis(client, session):
     """남의 분석을 저장한 행도 지워야 한다. scans 만 지우면 남는다"""
-    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()[
-        "user_id"
-    ]
+    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()["user_id"]
     other = User(device_token=hash_token("other"))
     session.add(other)
     await session.flush()
     other_id = other.id
     analysis_id, rest_id = await _seed_records(session, other_id)
-    session.add(
-        MyCheck(user_id=user_id, analysis_id=analysis_id, restaurant_id=rest_id)
-    )
+    session.add(MyCheck(user_id=user_id, analysis_id=analysis_id, restaurant_id=rest_id))
     await session.commit()
 
     client.request(
-        "DELETE",
-        "/api/users/me",
-        headers=H,
+        "DELETE", "/api/users/me", headers=H,
         json={"agree": True, "delete_saved_menus": True},
     )
 
+    # 탈퇴한 행은 user_id 가 NULL 로 바뀌므로 user_id 로 찾으면 안 된다
     owners = (await session.scalars(select(MyCheck.user_id))).all()
     assert owners == [other_id]
-    assert await session.scalar(select(Scan)) is not None
+    assert await session.scalar(select(Scan)) is not None   # 남의 기록은 그대로
 
 
 async def _seed_records(session, user_id: int) -> tuple[int, int]:
-    dish = Dish(
-        canonical_name="kimchijjigae", name_ko="김치찌개", name_en="Kimchi Jjigae"
-    )
+    dish = Dish(canonical_name="kimchijjigae", name_ko="김치찌개", name_en="Kimchi Jjigae")
     rest = Restaurant(kakao_place_id="1", name="명동교자", lat=37.5, lng=127.0)
     session.add_all([dish, rest])
     await session.flush()
@@ -149,8 +166,6 @@ async def _seed_records(session, user_id: int) -> tuple[int, int]:
     analysis = Analysis(scan_id=scan.id, dish_id=dish.id, verdict="safe")
     session.add(analysis)
     await session.flush()
-    session.add(
-        MyCheck(user_id=user_id, analysis_id=analysis.id, restaurant_id=rest.id)
-    )
+    session.add(MyCheck(user_id=user_id, analysis_id=analysis.id, restaurant_id=rest.id))
     await session.commit()
     return analysis.id, rest.id

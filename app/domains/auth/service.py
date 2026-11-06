@@ -1,8 +1,10 @@
 """가입 조회 탈퇴"""
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import unauthorized
 from app.core.security import hash_token
 from app.domains.auth.models import User
 from app.domains.auth.schemas import MeResponse
@@ -26,13 +28,23 @@ async def sign_up(
     if user_id is None:
         user = User(device_token=hash_token(device_token), nickname=nickname)
         session.add(user)
-        await session.commit()
-        user_id = user.id
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            user_id = await find_user_id(session, device_token)
+            if user_id is None:
+                raise
+        else:
+            user_id = user.id
     return await get_me(session, user_id)
 
 
 async def get_me(session: AsyncSession, user_id: int) -> MeResponse:
     user = await session.get(User, user_id)
+    if user is None:
+        # 인증을 지난 뒤 다른 요청이 탈퇴시킨 경우
+        raise unauthorized()
     profile = await session.scalar(
         select(DietaryProfile).where(DietaryProfile.user_id == user_id)
     )
