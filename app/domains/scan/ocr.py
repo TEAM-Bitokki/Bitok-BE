@@ -51,8 +51,10 @@ class MenuItem(BaseModel):
         "직원에게 이 글자를 그대로 보여준다. 한국어와 영어가 함께 있으면 한국어 쪽"
     )
     name_en: str = Field(
-        description="raw_name 의 한국어 발음을 로마자로 붙여 쓴 것. 첫 글자만 대문자. "
-        "번역이 아니다 (불고기는 Bulgogi, Soy Sauce Beef 아님). (대) 같은 크기 표시는 뺀다"
+        description="raw_name 의 한국어 발음을 로마자로 쓴 것. 메뉴명에서 띄어 쓴 곳만 띄우고 "
+        "단어마다 첫 글자를 대문자로. 번역이 아니다 "
+        "(불고기는 Bulgogi, Soy Sauce Beef 아님. 그린 샐러드는 Geurin Saelleodeu). "
+        "(대) 같은 크기 표시는 뺀다"
     )
     confidence: float = Field(
         ge=0, le=1, description="이 이름을 맞게 읽었다고 확신하는 정도. 0~1"
