@@ -9,7 +9,7 @@ from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.models import Dish, canonical_name
+from app.common.models import Dish, dish_key
 from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
 from app.core.storage import delete_image, save_image
@@ -75,7 +75,7 @@ async def create_scan(
     if kind is None:
         raise BitokError(
             ErrorCode.INVALID_IMAGE,
-            f"{settings.max_image_mb}MB 이하의 JPEG PNG WEBP 만 올릴 수 있습니다.",
+            f"{settings.max_image_mb}MB 이하의 JPEG, PNG, WEBP 만 올릴 수 있습니다.",
         )
 
     if restaurant_id is not None and not await session.get(Restaurant, restaurant_id):
@@ -97,7 +97,7 @@ async def create_scan(
             ErrorCode.OCR_LOW_CONFIDENCE, "사진이 흐립니다. 다시 찍어주세요.", 422
         )
 
-    keys = {canonical_name(i.raw_name) for i in items}
+    keys = {dish_key(i.raw_name) for i in items}
     known = dict(
         (
             await session.execute(
@@ -111,7 +111,7 @@ async def create_scan(
         RecognizedItem(
             temp_id=f"i{n}",
             raw_name=i.raw_name,
-            name_en=known.get(canonical_name(i.raw_name)) or i.name_en or None,
+            name_en=known.get(dish_key(i.raw_name)) or i.name_en or None,
             confidence=round(i.confidence, 2),
         )
         for n, i in enumerate(items, 1)
