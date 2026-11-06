@@ -23,9 +23,8 @@ async def get_profile(user_id: CurrentUser) -> ProfileResponse:
     summary="식이 프로필 등록/수정",
     description=(
         "통째로 덮어쓴다. 온보딩과 수정 화면이 같은 엔드포인트를 쓴다.\n\n"
-        "저장할 때 서버가 차단 성분 분류 목록을 계산한다. "
-        "고른 알레르기 성분의 분류와 식단 유형에서 나오는 분류를 합치고, "
-        "Vegetarian 하위 선택으로 일부를 뺀다.\n\n"
+        "알레르기는 고른 성분만 판정한다. 새우를 골라도 새우젓은 걸리지 않는다.\n\n"
+        "식단 유형은 분류 단위로 막고, Vegetarian 하위 선택으로 달걀·유제품을 뺀다."
     ),
     responses=responses(UNAUTHORIZED, (400, "존재하지 않는 성분 id")),
 )
