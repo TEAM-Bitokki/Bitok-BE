@@ -6,7 +6,7 @@
 
 Bitok은 Bite와 OK를 결합한 이름으로, 먹기 전 음식이 나의 식이 조건에 맞는지 확인한다는 의미입니다. 메뉴판을 촬영하면 알레르기·채식 조건에 맞춰 주의 정보를 안내하고, 직원에게 보여줄 한국어 확인 문장을 만들어줍니다.
 
-FastAPI · PostgreSQL · SQLAlchemy + Alembic · GitHub Actions · AWS (EC2 + RDS)
+FastAPI · PostgreSQL · SQLAlchemy + Alembic · GitHub Actions · AWS EC2
 
 ## 실행
 
@@ -17,8 +17,14 @@ python -m venv .venv
 pip install -r requirements-dev.txt
 copy .env.example .env
 
+docker compose up -d --wait
+alembic upgrade head
 uvicorn app.main:app --reload
-pytest
+```
+
+```bash
+docker compose exec db createdb -U bitok bitok_test
+python -m pytest
 ```
 
 ## 구조
@@ -48,5 +54,4 @@ alembic/
 └── versions/            마이그레이션
 
 tests/
-└── test_contract.py     
 ```
