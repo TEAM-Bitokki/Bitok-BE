@@ -1,6 +1,11 @@
+from typing import Annotated
+
 from pydantic import BaseModel, Field
 
 from app.common.schemas import DietOption, DietType, Severity
+
+
+IngredientId = Annotated[int, Field(ge=1, le=2**63 - 1)]  # BIGINT
 
 
 class AllergenItem(BaseModel):
@@ -22,7 +27,10 @@ class ProfileResponse(BaseModel):
 
 class ProfileRequest(BaseModel):
     """온보딩과 수정 양쪽에서 쓴다. 통째로 덮어쓴다."""
-    allergen_ingredient_ids: list[int] = Field(examples=[[301, 305, 412]])
+
+    allergen_ingredient_ids: list[IngredientId] = Field(
+        max_length=100, examples=[[301, 305, 412]]
+    )
     diet_type: DietType = Field(examples=["vegetarian"])
     diet_options: list[DietOption] = Field(
         default_factory=list, examples=[["eats_egg"]]
