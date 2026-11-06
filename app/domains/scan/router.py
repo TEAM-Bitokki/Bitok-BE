@@ -5,7 +5,7 @@ from fastapi import APIRouter, File, Form, UploadFile, status
 from app.core.db import SessionDep
 from app.core.deps import CurrentUser
 from app.core.errors import UNAUTHORIZED, ErrorCode, responses
-from app.domains.scan import service
+from app.domains.scan import analysis, service
 from app.domains.scan.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -35,9 +35,9 @@ router = APIRouter(prefix="/api/scans", tags=["스캔/분석"])
         "| `OCR_LOW_CONFIDENCE` | 흐린 사진->재촬영을 권장 |\n"
         "| `INVALID_IMAGE` | 형식/크기 문제 |\n"
         "| `PROFILE_REQUIRED` | 식이 프로필이 없음 |\n"
-        "| `LLM_UNAVAILABLE` · `LLM_TIMEOUT` | LLM오류 |\n\n"
+        "| `LLM_UNAVAILABLE` / `LLM_TIMEOUT` | LLM오류 |\n\n"
         "### 추가 고려사항\n\n"
-        "- `items[].name_en` — 로마자 표기. 번역 아님 (불고기 → Bulgogi). "
+        "- `items[].name_en` — 로마자 표기. 번역 아님 (불고기 -> Bulgogi). "
         "사전에 있는 메뉴면 사전 표기를 쓴다\n"
         "- `items[].confidence` — 0.7 미만이면 살짝 못 믿김...\n"
         "- `items[].temp_id` — 이 스캔 안에서만 쓰는 임시 id. 무시하세요.\n"
@@ -79,12 +79,13 @@ async def create_scan(
         "`selected_temp_ids` 가 분석할 항목이다.\n\n"
         "함께 돌려주는 질문은 확인이 필요한 재료에 대해서만 만들어진다. "
         "거의 확실히 들어가는 재료는 묻지 않고 바로 판정한다.\n\n"
-        "**`questions` 는 0~5개다.** 메뉴를 몇 개 고르든 5개를 넘지 않는다. "
-        "넘칠 때는 알레르기 관련 질문을 먼저 넣는다. "
-        "**빈 배열이면 질문 화면을 건너뛰고 바로 결과로 간다.**"
+        "questions 는 0~5개다. 넘칠 때는 알레르기 관련 질문을 먼저 넣는다. "
+        "빈 배열이면 질문 화면을 건너뛰고 바로 결과로 간다.\n\n"
+        "`menus[].matches` 에는 걸린 재료만 온다."
     ),
     responses=responses(
         UNAUTHORIZED,
+        (400, "목록에 없는 temp_id 를 고름", ErrorCode.VALIDATION_ERROR),
         (404, "없는 스캔"),
         (422, "식이 프로필 미등록", ErrorCode.PROFILE_REQUIRED),
         (502, "모델 응답 실패"),
@@ -95,8 +96,9 @@ async def analyze(
     scan_id: int,
     body: AnalyzeRequest,
     user_id: CurrentUser,
+    session: SessionDep,
 ) -> AnalyzeResponse:
-    raise NotImplementedError
+    return await analysis.analyze(session, user_id, scan_id, body)
 
 
 @router.post(
