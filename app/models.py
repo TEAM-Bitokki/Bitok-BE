@@ -6,6 +6,7 @@ from app.common.models import (
     Dish,
     DishAlias,
     DishIngredient,
+    DishIngredientSource,
     Ingredient,
     IngredientAlias,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "Dish",
     "DishAlias",
     "DishIngredient",
+    "DishIngredientSource",
     "Ingredient",
     "IngredientAlias",
     "MyCheck",

@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import func, select, text
 
 from app.common.models import Dish, DishIngredient, Ingredient, IngredientAlias
+from scripts.retag_ingredients import retag
 from scripts.seed_dictionary import build, read_rows, seed, tags_for
 
 
@@ -164,3 +165,78 @@ async def test_generic_ingredient_is_possible(session):
         )
     )
     assert dict(rows.all()) == {"육수": "possible", "메밀": "typical"}
+
+
+@pytest.mark.asyncio
+async def test_seed_handles_many_dishes(session):
+    """메뉴가 1만 개를 넘어도 한 쿼리 값 한도(32767)에 안 걸린다"""
+    plan = build([])
+    plan.dishes = {f"메뉴{i}": (f"메뉴{i}", f"Menu{i}", {"쌀"}) for i in range(11_000)}
+
+    await seed(session, plan)
+
+    assert await session.scalar(select(func.count()).select_from(Dish)) == 11_000
+    assert (
+        await session.scalar(select(func.count()).select_from(DishIngredient)) == 11_000
+    )
+
+
+def test_build_drops_size_marks():
+    """김치찌개 (대) 와 김치찌개는 같은 메뉴다. 분석과 같은 키를 쓴다"""
+    plan = build(
+        [
+            menu("김치찌개 (대)", ["김치"]),
+            menu("김치찌개", ["김치"]),
+            menu("오징어순대", ["오징어"]),
+        ]
+        * 2
+    )
+    assert set(plan.dishes) == {"김치찌개", "오징어순대"}
+    assert plan.dishes["김치찌개"][0] == "김치찌개"
+
+
+@pytest.mark.asyncio
+async def test_seed_moves_links_from_alias_rows(session):
+    """분석이 먼저 만든 '소고기' 재료가 있으면 시드가 쇠고기로 옮긴다"""
+    beef = Ingredient(name_ko="소고기", name_en="Beef", searchable=False)
+    dish = Dish(canonical_name="불고기", name_ko="불고기", name_en="Bulgogi")
+    session.add_all([beef, dish])
+    await session.flush()
+    session.add(
+        DishIngredient(
+            dish_id=dish.id, ingredient_id=beef.id, likelihood="typical", source="llm"
+        )
+    )
+    await session.commit()
+
+    await seed(session, build([]))
+
+    rows = await session.execute(
+        select(Ingredient.name_ko)
+        .join(DishIngredient, DishIngredient.ingredient_id == Ingredient.id)
+        .where(DishIngredient.dish_id == dish.id)
+    )
+    assert rows.scalars().all() == ["쇠고기"]
+
+
+@pytest.mark.asyncio
+async def test_retag_alone_fixes_old_tags(session):
+    """시드 없이도 분류만 다시 맞출 수 있다. 배포할 때 이것만 돌린다"""
+    session.add_all(
+        [
+            Ingredient(name_ko="육수", name_en="Broth", allergen_tags=["fish", "meat"]),
+            Ingredient(name_ko="두유", name_en="Soy Milk", allergen_tags=["dairy"]),
+        ]
+    )
+    await session.commit()
+
+    assert await retag(session) == 2
+    await session.commit()
+    assert await retag(session) == 0
+
+    rows = dict(
+        (
+            await session.execute(select(Ingredient.name_ko, Ingredient.allergen_tags))
+        ).all()
+    )
+    assert rows == {"육수": ["crustacean", "fish", "meat", "shellfish"], "두유": []}

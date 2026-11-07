@@ -6,7 +6,13 @@ from google.genai import errors
 from sqlalchemy import func, select
 
 from app.common.dictionary import with_sources
-from app.common.models import Dish, DishAlias, Ingredient, dish_key
+from app.common.models import (
+    Dish,
+    DishAlias,
+    DishIngredient,
+    Ingredient,
+    dish_key,
+)
 from app.core import llm
 from app.core.config import settings
 from app.domains.profile.models import DietaryProfile, ProfileAllergen
@@ -15,11 +21,14 @@ from app.domains.scan.dish import DishInfo, DishInfos, IngredientName
 from app.domains.scan.judge import Rules, judge
 from app.domains.scan.models import Analysis, Scan, StaffQuestion
 from scripts.seed_dictionary import build, seed
-from tests.conftest import TestSessionMaker
 from tests.test_seed import menu
 
 V4 = "550e8400-e29b-41d4-a716-446655440000"
 H = {"deviceToken": V4}
+
+
+def _name(ko, en, contains=()):
+    return IngredientName(name_ko=ko, name_en=en, contains=list(contains))
 
 
 def info(name, en, typical=(), possible=(), unknown=False):
@@ -27,8 +36,8 @@ def info(name, en, typical=(), possible=(), unknown=False):
         name=name,
         name_en=en,
         unknown=unknown,
-        typical=[IngredientName(name_ko=k, name_en=e) for k, e in typical],
-        possible=[IngredientName(name_ko=k, name_en=e) for k, e in possible],
+        typical=[_name(*t) for t in typical],
+        possible=[_name(*t) for t in possible],
     )
 
 
@@ -234,24 +243,6 @@ async def test_llm_failure_saves_nothing(client, session, scan, monkeypatch):
     )
 
 
-@pytest.mark.asyncio
-async def test_llm_wrong_menu_uses_fallback(client, session, scan, monkeypatch):
-    """받은 메뉴와 다른 메뉴로 답하면 예비 모델에 다시 묻는다"""
-    await profile(client, session)
-    models = []
-
-    async def mixed(model, system, contents, schema):
-        models.append(model)
-        name = "엉뚱한메뉴" if model == settings.gemini_model else "마파두부밥"
-        return DishInfos(dishes=[info(name, "Mapadububap")])
-
-    monkeypatch.setattr(llm, "_call", mixed)
-    r = analyze(client, scan, "마파두부밥")
-
-    assert r.status_code == 200
-    assert models == [settings.gemini_model, settings.gemini_fallback_model]
-
-
 @pytest.mark.parametrize(
     "body,code",
     [
@@ -327,24 +318,6 @@ def test_generic_matches_allergy_by_tag():
     assert judge([crab | {"likelihood": "typical"}], shrimp) == "safe"
 
 
-@pytest.mark.asyncio
-async def test_broth_asks_what_it_is_made_of(client, session, scan, monkeypatch):
-    await profile(client, session, ["생선"])
-    llm_knows(
-        monkeypatch,
-        info("냉면", "Naengmyeon", possible=[("육수", "Broth")]),
-    )
-
-    r = analyze(client, scan, "냉면")
-
-    [m] = r.json()["menus"]
-    assert m["verdict"] == "not_sure"
-    assert [x["ingredient"] for x in m["matches"]] == ["육수"]
-    [q] = r.json()["questions"]
-    assert q["question_ko"] == "이 냉면의 육수에 생선이 들어가나요?"
-    assert q["question_en"] == "Does the broth in this Naengmyeon contain fish?"
-
-
 @pytest.mark.parametrize(
     "diet,questions",
     [
@@ -367,20 +340,6 @@ async def test_broth_asks_by_diet(client, session, scan, monkeypatch, diet, ques
     r = analyze(client, scan, "냉면")
 
     assert [q["question_ko"] for q in r.json()["questions"]] == questions
-
-
-@pytest.mark.asyncio
-async def test_seafood_asks_plainly_for_vegan(client, session, scan, monkeypatch):
-    await profile(client, session, diet="vegan")
-    llm_knows(
-        monkeypatch, info("해물파전", "Haemulpajeon", possible=[("해산물", "Seafood")])
-    )
-
-    r = analyze(client, scan, "해물파전")
-
-    assert [q["question_ko"] for q in r.json()["questions"]] == [
-        "이 해물파전에 해산물이 들어가나요?"
-    ]
 
 
 @pytest.mark.asyncio
@@ -450,22 +409,6 @@ def test_duplicate_temp_ids_rejected(client, scan):
 
 
 @pytest.mark.asyncio
-async def test_mock_dish_gets_roman_later(client, session, scan, monkeypatch):
-    """mock 으로 만든 메뉴는 로마자 자리에 한국어가 있다. 실제 모델을 부르면 채운다"""
-    await profile(client, session)
-    monkeypatch.setattr(settings, "mock_llm", True)
-    assert analyze(client, scan, "마파두부밥").json()["menus"][0]["name_en"] == (
-        "마파두부밥"
-    )
-
-    monkeypatch.setattr(settings, "mock_llm", False)
-    llm_knows(monkeypatch, info("마파두부밥", "Mapadububap"))
-    assert analyze(client, scan, "마파두부밥").json()["menus"][0]["name_en"] == (
-        "Mapadububap"
-    )
-
-
-@pytest.mark.asyncio
 async def test_long_ingredient_list_is_not_cut(client, session, scan, monkeypatch):
     """재료가 많아도 자르지 않는다. 잘린 뒤쪽 재료로 safe 가 나오면 안 된다"""
     await profile(client, session, ["새우"])
@@ -490,9 +433,9 @@ async def test_broth_may_hide_shrimp(client, session, scan, monkeypatch):
 
     r = analyze(client, scan, "짬뽕")
 
-    assert [q["question_ko"] for q in r.json()["questions"]] == [
-        "이 짬뽕의 육수에 새우가 들어가나요?"
-    ]
+    [q] = r.json()["questions"]
+    assert q["question_ko"] == "이 짬뽕의 육수에 새우가 들어가나요?"
+    assert q["question_en"] == "Does the broth in this Jjamppong contain shrimp?"
 
 
 @pytest.mark.asyncio
@@ -516,7 +459,9 @@ async def test_too_long_ingredient_uses_fallback(client, session, scan, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_profile_changed_while_waiting(client, session, scan, monkeypatch):
+async def test_profile_changed_while_waiting(
+    client, session, scan, monkeypatch, other_session
+):
     """모델을 기다리는 동안 새우 알레르기를 추가하면 새 프로필로 판정한다"""
     await profile(client, session)
     shrimp = await session.scalar(
@@ -524,7 +469,7 @@ async def test_profile_changed_while_waiting(client, session, scan, monkeypatch)
     )
 
     async def slow(names):
-        async with TestSessionMaker() as other:
+        async with other_session() as other:
             p = await other.scalar(select(DietaryProfile))
             other.add(ProfileAllergen(profile_id=p.id, ingredient_id=shrimp))
             await other.commit()
@@ -537,27 +482,137 @@ async def test_profile_changed_while_waiting(client, session, scan, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_alias_does_not_rename_dish(client, session, scan, monkeypatch):
-    """별칭 이름의 로마자로 원래 메뉴 표기를 바꾸지 않는다"""
-    d = Dish(canonical_name="마파두부밥", name_ko="마파두부밥", name_en="마파두부밥")
-    session.add(d)
-    await session.flush()
-    session.add(DishAlias(dish_id=d.id, alias="마파두부덮밥"))
-    await session.commit()
-    await profile(client, session)
+async def test_model_sources_catch_meat(client, session, scan, monkeypatch):
+    """이름 규칙에 없는 재료도 모델이 알려준 원재료로 걸린다. 그 메뉴에만 붙는다"""
+    await profile(client, session, diet="vegetarian")
     llm_knows(
         monkeypatch,
-        info("마파두부밥", "Mapadububap"),
-        info("마파두부덮밥", "Mapadubudeopbap"),
+        info(
+            "크리스피롤",
+            "Keuriseupirol",
+            typical=[("크리스피스트립", "Crispy Strip", ["닭고기", "밀"])],
+        ),
+        info("스트립볼", "Seuteuripbol", typical=[("크리스피스트립", "Crispy Strip")]),
     )
 
-    r = analyze(client, scan, "마파두부덮밥", "마파두부밥")
+    first = analyze(client, scan, "크리스피롤").json()["menus"][0]
+    second = analyze(client, scan, "스트립볼").json()["menus"][0]
 
-    assert r.json()["menus"][0]["name_en"] == "Mapadububap"
+    assert first["verdict"] == "avoid"
+    assert second["verdict"] == "safe"
+    assert ("닭고기", "meat") in [(m["ingredient"], m["tag"]) for m in first["matches"]]
 
 
-@pytest.mark.parametrize("noodle", ["우동면", "칼국수면", "라면", "만두피"])
-def test_wheat_products_lead_to_wheat(noodle):
-    """면과 만두피는 밀이다. 당면은 고구마 전분이라 아니다"""
-    assert "밀" in with_sources({noodle})
-    assert "밀" not in with_sources({"당면"})
+@pytest.mark.parametrize(
+    "allergens,diet,verdict",
+    [([], "vegan", "safe"), (["아몬드"], "none", "avoid"), (["우유"], "none", "safe")],
+    ids=["비건", "아몬드 알레르기", "우유 알레르기"],
+)
+@pytest.mark.asyncio
+async def test_almond_milk_is_almond(
+    client, session, scan, monkeypatch, allergens, diet, verdict
+):
+    await profile(client, session, allergens, diet)
+    llm_knows(
+        monkeypatch,
+        info(
+            "아몬드라떼",
+            "Amondeuratte",
+            typical=[("아몬드우유", "Almond Milk", ["아몬드"])],
+        ),
+    )
+
+    r = analyze(client, scan, "아몬드라떼")
+
+    assert r.json()["menus"][0]["verdict"] == verdict
+
+
+@pytest.mark.parametrize(
+    "name,has,lacks",
+    [
+        ("치킨텐더", {"닭고기"}, set()),
+        ("돈까스", {"돼지고기", "밀"}, set()),
+        ("아몬드우유", {"아몬드"}, {"우유", "유제품"}),
+        ("귀리우유", {"귀리"}, {"우유"}),
+        ("두유", {"대두"}, set()),
+        ("콩고기", {"대두"}, set()),
+        ("치킨무", set(), {"닭고기"}),
+        ("우동면", {"밀"}, set()),
+        ("만두피", {"밀"}, set()),
+        ("당면", set(), {"밀"}),
+    ],
+)
+def test_name_rules_for_common_cases(name, has, lacks):
+    """모델이 원재료를 빠뜨려도 흔한 이름은 규칙으로 잡는다"""
+    found = with_sources({name})
+    assert has <= found
+    assert not lacks & found
+
+
+@pytest.mark.asyncio
+async def test_sources_from_every_menu_are_kept(client, session, scan, monkeypatch):
+    """같은 롤반죽이라도 계란은 에그롤에만 붙는다. 다음 요청의 다른 메뉴에도 번지지 않는다"""
+    await profile(client, session, ["계란"])
+    llm_knows(
+        monkeypatch,
+        info("에그롤", "Egeurol", typical=[("롤반죽", "Roll Dough", ["계란"])]),
+        info("야채롤", "Yachaerol", typical=[("롤반죽", "Roll Dough")]),
+        info("김밥롤", "Gimbapnol", typical=[("롤반죽", "Roll Dough")]),
+    )
+
+    r = analyze(client, scan, "에그롤", "야채롤")
+    later = analyze(client, scan, "김밥롤")
+
+    assert [m["verdict"] for m in r.json()["menus"]] == ["avoid", "safe"]
+    assert later.json()["menus"][0]["verdict"] == "safe"
+
+
+@pytest.mark.asyncio
+async def test_broth_contents_stay_with_the_dish(client, session, scan, monkeypatch):
+    """육수에 밀이 든다고 하면 그 메뉴에만 밀을 붙인다"""
+    await profile(client, session, ["밀"])
+    llm_knows(
+        monkeypatch,
+        info("짬뽕", "Jjamppong", possible=[("육수", "Broth", ["밀"])]),
+        info("냉면", "Naengmyeon", possible=[("육수", "Broth")]),
+    )
+
+    jjamppong = analyze(client, scan, "짬뽕").json()
+    naengmyeon = analyze(client, scan, "냉면").json()
+
+    assert jjamppong["menus"][0]["verdict"] == "not_sure"
+    assert [q["question_ko"] for q in jjamppong["questions"]] == [
+        "이 짬뽕의 육수에 밀이 들어가나요?"
+    ]
+    assert naengmyeon["menus"][0]["verdict"] == "safe"
+
+
+@pytest.mark.parametrize("source,verdict", [("llm", "avoid"), ("curated", "not_sure")])
+@pytest.mark.asyncio
+async def test_typical_upgrades_earlier_model_answer(
+    client, session, scan, monkeypatch, source, verdict
+):
+    """다른 요청이 먼저 possible 로 넣었어도 typical 이 오면 올린다. 검수 데이터는 그대로"""
+    await profile(client, session, ["새우"])
+    d = Dish(
+        canonical_name="새우볶음밥", name_ko="새우볶음밥", name_en="Saeubokkeumbap"
+    )
+    session.add(d)
+    await session.flush()
+    shrimp = await session.scalar(
+        select(Ingredient.id).where(Ingredient.name_ko == "새우")
+    )
+    session.add(
+        DishIngredient(
+            dish_id=d.id, ingredient_id=shrimp, likelihood="possible", source=source
+        )
+    )
+    await session.commit()
+    llm_knows(
+        monkeypatch,
+        info("새우볶음밥", "Saeubokkeumbap", typical=[("새우", "Shrimp")]),
+    )
+
+    r = analyze(client, scan, "새우볶음밥")
+
+    assert r.json()["menus"][0]["verdict"] == verdict

@@ -7,6 +7,11 @@ from app.main import app
 
 V4 = "550e8400-e29b-41d4-a716-446655440000"
 V1 = "2c1b7c0e-b7a4-11ef-9cd2-0242ac120002"
+UNREGISTERED = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+
+pytestmark = (
+    pytest.mark.nodb
+)  # 테이블을 비우지 않는다. UNREGISTERED 는 가입시키지 않는다
 
 PATH_PARAMS = {
     "{scan_id}": "1",
@@ -47,12 +52,14 @@ def secured_routes() -> list[tuple[str, str]]:
     return out
 
 
-@pytest.mark.parametrize("method,path", secured_routes())
-def test_every_secured_route_401s_without_token(client, method, path):
+def test_every_secured_route_401s_without_token(client):
     """토큰 없이 불렀을때 모두 401인가?"""
-    r = client.request(method, path, json={})
-    assert r.status_code == 401, f"{method} {path} → {r.status_code}"
-    assert err(r)["code"] == "UNAUTHORIZED"
+    wrong = []
+    for method, path in secured_routes():
+        r = client.request(method, path, json={})
+        if r.status_code != 401 or err(r)["code"] != "UNAUTHORIZED":
+            wrong.append(f"{method} {path} -> {r.status_code}")
+    assert not wrong, wrong
 
 
 def test_signup_needs_no_token(client):
@@ -66,7 +73,7 @@ def test_bad_tokens_are_indistinguishable(client, token):
     """토큰 존재 여부를 추측가능한가?"""
     headers = {} if token is None else {"deviceToken": token}
     r = client.get("/api/auth/me", headers=headers)
-    registered = client.get("/api/auth/me", headers={"deviceToken": V4})
+    registered = client.get("/api/auth/me", headers={"deviceToken": UNREGISTERED})
 
     assert r.status_code == registered.status_code == 401
     assert err(r) == err(registered)

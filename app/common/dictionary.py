@@ -1,6 +1,7 @@
 """성분 사전 규칙. 시드와 분석이 같은 규칙을 쓴다"""
 
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
 from functools import cache
 
 # 기획서 알레르기 검색 목록. 이것만 검색에 나온다
@@ -106,24 +107,26 @@ SOURCES = {
     "대두": (
         "두부", "순두부", "연두부", "건두부", "된장", "간장", "소이소스", "춘장",
         "청국장", "콩비지", "유부", "유부주머니", "낫또", "낫토", "두반장", "콩나물",
-        "검은콩", "데리야끼소스",
+        "검은콩", "데리야끼소스", "두유", "콩고기",
     ),
     "밀": (
         "밀가루", "밀떡", "빵", "빵가루", "바게트", "또띠아", "튀김가루", "파스타면",
         "스파게티면", "쫄면", "소면", "생면", "수제비", "꽃빵", "간장", "춘장",
         "데리야끼소스", "우동면", "칼국수면", "라면", "중화면", "만두피", "부침가루",
+        "돈까스", "돈가스",
     ),
     "글루텐": ("밀", "보리"),
     "메밀": ("메밀면", "메밀가루"),
+    "귀리": ("귀리우유", "오트밀크", "오트밀"),
     "쌀": (
         "쌀면", "쌀떡", "쌀가루", "찹쌀", "찹쌀가루", "현미", "흑미", "누룽지", "떡",
-        "가래떡",
+        "가래떡", "쌀우유",
     ),
     "옥수수": ("스위트콘", "옥수수면"),
     "우유": ("유제품",),
     "땅콩": ("땅콩버터", "땅콩소스"),
-    "아몬드": ("아몬드가루",),
-    "코코넛": ("코코넛밀크",),
+    "아몬드": ("아몬드가루", "아몬드우유"),
+    "코코넛": ("코코넛밀크", "코코넛우유"),
     "견과류": (
         "아몬드", "호두", "캐슈너트", "피스타치오", "헤이즐넛", "마카다미아", "잣", "밤",
     ),
@@ -167,6 +170,9 @@ SOURCES = {
 
 SOURCE_WORDS = {
     "닭": "닭고기",
+    "치킨": "닭고기",
+    "돈까스": "돼지고기",
+    "돈가스": "돼지고기",
     "돼지": "돼지고기",
     "새우": "새우",
     "오징어": "오징어",
@@ -201,7 +207,7 @@ TAG_WORDS = {
         "소힘줄", "특수부위", "특양", "천엽", "오돌뼈", "곱창", "막창", "대창",
         "순대", "족발", "소내장", "선지", "편육", "사골", "장조림", "완자", "베이컨",
         "햄", "하몽", "살라미", "페퍼로니", "페페로니", "소시지", "소세지", "스팸",
-        "차슈", "닭", "오리고기", "훈제오리", "오리훈제", "메추리", "육포", "번데기",
+        "차슈", "닭", "치킨", "돈까스", "돈가스", "패티", "미트볼", "너겟", "오리고기", "훈제오리", "오리훈제", "메추리", "육포", "번데기",
     ),
     "fish": (
         "생선", "활어", "회무침", "연어", "참치", "다랑어", "고등어", "갈치", "꽁치",
@@ -257,6 +263,15 @@ TAG_EXACT = {
     "가라아게": {"meat"},
     "햄버거빵": set(),
     "땅콩버터": set(),
+    # 이름에 우유, 고기가 있어도 식물성이다
+    "두유": set(),
+    "아몬드우유": set(),
+    "귀리우유": set(),
+    "쌀우유": set(),
+    "코코넛우유": set(),
+    "콩고기": set(),
+    "치킨무": set(),
+    "치킨스톡": {"meat"},
 }
 
 
@@ -280,7 +295,8 @@ for base, names in SOURCES.items():
 @cache
 def sources_of(name: str) -> frozenset[str]:
     found = set(DERIVED.get(name, ()))
-    found |= {base for word, base in SOURCE_WORDS.items() if word in name}
+    if TAG_EXACT.get(name) != set():  # 치킨무
+        found |= {base for word, base in SOURCE_WORDS.items() if word in name}
     if name not in GENERIC:
         for tag in tags_for(name):
             found |= set(TAG_SOURCES.get(tag, ()))
@@ -288,11 +304,17 @@ def sources_of(name: str) -> frozenset[str]:
     return frozenset(found)
 
 
-def with_sources(names: set[str]) -> set[str]:
-    """두부 -> 대두, 연어 -> 생선. 원재료를 끝까지 따라간다"""
+def with_sources(
+    names: set[str], told: Mapping[str, Iterable[str]] | None = None
+) -> set[str]:
+    """두부 -> 대두, 연어 -> 생선. 원재료를 끝까지 따라간다
+
+    told 는 모델이 알려준 원재료 (치킨텐더 -> 닭고기). 이름 규칙에 더한다."""
+    told = told or {}
     found, todo = set(names), list(names)
     while todo:
-        for base in sources_of(todo.pop()) - found:
+        name = todo.pop()
+        for base in (sources_of(name) | set(told.get(name, ()))) - found:
             found.add(base)
             todo.append(base)
     return found
