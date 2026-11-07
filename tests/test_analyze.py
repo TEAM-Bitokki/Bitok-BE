@@ -5,6 +5,7 @@ import pytest_asyncio
 from google.genai import errors
 from sqlalchemy import func, select
 
+from app.common.dictionary import with_sources
 from app.common.models import Dish, DishAlias, Ingredient, dish_key
 from app.core import llm
 from app.core.config import settings
@@ -553,3 +554,10 @@ async def test_alias_does_not_rename_dish(client, session, scan, monkeypatch):
     r = analyze(client, scan, "마파두부덮밥", "마파두부밥")
 
     assert r.json()["menus"][0]["name_en"] == "Mapadububap"
+
+
+@pytest.mark.parametrize("noodle", ["우동면", "칼국수면", "라면", "만두피"])
+def test_wheat_products_lead_to_wheat(noodle):
+    """면과 만두피는 밀이다. 당면은 고구마 전분이라 아니다"""
+    assert "밀" in with_sources({noodle})
+    assert "밀" not in with_sources({"당면"})
