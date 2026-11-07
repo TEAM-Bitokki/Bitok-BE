@@ -23,6 +23,7 @@ from app.common.models import (
 from app.common.schemas import Likelihood, MatchStatus, Verdict
 from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
+from app.domains.check.models import MyCheck
 from app.domains.profile.models import DietaryProfile
 from app.domains.scan import judge as judging
 from app.domains.scan.dish import DishInfo, describe_dishes
@@ -50,6 +51,7 @@ async def analyze(
         raise BitokError(
             ErrorCode.PROFILE_REQUIRED, "식이 프로필을 먼저 저장하세요.", 422
         )
+    await _not_saved(session, scan_id)
 
     names = {i.temp_id: menu_name(i.raw_name) for i in body.items}
     unknown = [t for t in body.selected_temp_ids if t not in names]
@@ -75,6 +77,7 @@ async def analyze(
     )
     if await session.scalar(locked) is None:  # 같은 스캔을 두 번 보내면 차례로
         raise BitokError(ErrorCode.NOT_FOUND, "없는 스캔입니다.", 404)
+    await _not_saved(session, scan_id)
     await session.execute(
         select(DietaryProfile.id)
         .where(DietaryProfile.user_id == user_id)
@@ -462,6 +465,20 @@ async def _matches(
         {d: list(matches[d].values()) for d in dish_ids},
         {d: possible[d] for d in dish_ids},
     )
+
+
+async def _not_saved(session: AsyncSession, scan_id: int) -> None:
+    """다시 분석하면 분석을 지우고 새로 만든다. 저장한 메뉴가 같이 지워지지 않게 막는다"""
+    saved = await session.scalar(
+        select(MyCheck.id)
+        .join(Analysis, Analysis.id == MyCheck.analysis_id)
+        .where(Analysis.scan_id == scan_id)
+        .limit(1)
+    )
+    if saved is not None:
+        raise BitokError(
+            ErrorCode.ALREADY_EXISTS, "저장한 스캔은 다시 분석할 수 없습니다.", 409
+        )
 
 
 async def _questions(

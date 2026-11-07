@@ -89,6 +89,7 @@ async def create_scan(
         UNAUTHORIZED,
         (400, "목록에 없는 temp_id 를 고름", ErrorCode.VALIDATION_ERROR),
         (404, "없는 스캔"),
+        (409, "이미 저장한 스캔", ErrorCode.ALREADY_EXISTS),
         (422, "식이 프로필 미등록", ErrorCode.PROFILE_REQUIRED),
         (502, "모델 응답 실패"),
         (504, "모델 타임아웃"),
