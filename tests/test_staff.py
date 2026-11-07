@@ -117,6 +117,22 @@ async def test_yes_inside_beats_no_outside(client, session, scan, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_same_question_asked_once(client, session, scan, monkeypatch):
+    """계란 알레르기인 비건이어도 육수에 계란은 한 번만 묻는다"""
+    await profile(client, session, ["계란"], diet="vegan")
+    llm_knows(
+        monkeypatch, info("냉면", "Naengmyeon", possible=[("육수", "Broth", ["계란"])])
+    )
+    questions = analyze(client, scan, "냉면").json()["questions"]
+    texts = [q["question_ko"] for q in questions]
+
+    assert len(texts) == len(set(texts))
+    for q in questions:
+        answer(client, scan, q, "no")
+    assert result(client, scan).json()["menus"][0]["verdict"] == "safe"
+
+
+@pytest.mark.asyncio
 async def test_unknown_dish_needs_every_question(client, session, scan, monkeypatch):
     await profile(client, session, ["새우"], diet="pescatarian")
     llm_knows(monkeypatch, info("사장님특제", "Sajangnimteukje", unknown=True))

@@ -523,7 +523,11 @@ async def _questions(
                     (p, n, _ask(dish, m["ingredient_id"], name, m["ingredient_en"]))
                 )
     asks.sort(key=lambda a: a[:2])
-    return [a[2] for a in asks[: settings.max_staff_questions]]
+    unique = {}  # 계란 알레르기인 비건에게 "육수에 계란" 은 한 번만
+    for _, _, ask in asks:
+        d, i, *_, target = ask
+        unique.setdefault((d, i, target), ask)
+    return list(unique.values())[: settings.max_staff_questions]
 
 
 def _ask(dish: Dish, ingredient_id: int, ko: str, en: str, target="same") -> tuple:

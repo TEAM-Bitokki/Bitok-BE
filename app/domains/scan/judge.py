@@ -37,6 +37,9 @@ ASK_FOR_TAG = {
     "honey": ("꿀", "Honey"),
 }
 
+# 같은 것을 두 번 물었으면 조심스러운 답을 따른다
+CAUTION = [StaffAnswer.YES, StaffAnswer.UNSURE, StaffAnswer.NO]
+
 # (물은 재료, 들었는지 물은 것) -> 답. 물은 재료가 None 이면 메뉴 전체에 물은 것
 Facts = dict[tuple[str | None, str], str]
 
@@ -86,7 +89,8 @@ async def load_facts(session: AsyncSession, scan_id: int) -> dict[int, Facts]:
     )
     facts = defaultdict(dict)
     for dish_id, target, name, answer in rows:
-        facts[dish_id][(target, name)] = answer
+        old = facts[dish_id].get((target, name), answer)
+        facts[dish_id][(target, name)] = min(old, answer, key=CAUTION.index)
     return facts
 
 
