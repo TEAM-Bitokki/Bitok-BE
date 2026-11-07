@@ -41,8 +41,11 @@ async def list_my_checks(
     ),
     responses=responses(UNAUTHORIZED, (404, "없는 스캔")),
 )
-async def save(body: SaveRequest, user_id: CurrentUser) -> None:
-    raise NotImplementedError
+async def save(
+    body: SaveRequest, user_id: CurrentUser, session: SessionDep
+) -> None:
+    # 한 번의 스캔에는 여러 메뉴 분석 결과가 있으므로 저장 처리는 service에서 한꺼번에 한다.
+    await service.save_my_checks(session, user_id, body.scan_id)
 
 
 @router.delete(

@@ -199,3 +199,98 @@ def test_list_my_checks_rejects_invalid_cursor(client):
 
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_save_my_checks_saves_all_analyses(client, session):
+    user_id = await _user_with_profile(client, session)
+    restaurant = Restaurant(
+        kakao_place_id="save-place",
+        name="저장 식당",
+        lat=37.5,
+        lng=127.0,
+    )
+    session.add(restaurant)
+    await session.flush()
+    scan = Scan(user_id=user_id, restaurant_id=restaurant.id, image_url="menu.jpg")
+    session.add(scan)
+    dishes = [
+        Dish(canonical_name=f"save-{i}", name_ko=f"메뉴{i}", name_en=f"Menu {i}")
+        for i in range(3)
+    ]
+    session.add_all(dishes)
+    await session.flush()
+    analyses = [
+        Analysis(scan_id=scan.id, dish_id=dish.id, verdict="safe", matches=[])
+        for dish in dishes
+    ]
+    session.add_all(analyses)
+    await session.commit()
+
+    r = client.post("/api/my-checks", headers=H, json={"scan_id": scan.id})
+
+    assert r.status_code == 201
+    checks = (
+        await session.scalars(
+            select(MyCheck).where(MyCheck.user_id == user_id).order_by(MyCheck.id)
+        )
+    ).all()
+    assert [check.analysis_id for check in checks] == [item.id for item in analyses]
+    assert {check.restaurant_id for check in checks} == {restaurant.id}
+
+
+@pytest.mark.asyncio
+async def test_save_my_checks_is_idempotent(client, session):
+    user_id = await _user_with_profile(client, session)
+    check = await _add_check(
+        session, user_id, "이미저장", datetime.now(UTC), None
+    )
+    analysis = await session.get(Analysis, check.analysis_id)
+
+    first = client.post(
+        "/api/my-checks", headers=H, json={"scan_id": analysis.scan_id}
+    )
+    second = client.post(
+        "/api/my-checks", headers=H, json={"scan_id": analysis.scan_id}
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    saved = (
+        await session.scalars(
+            select(MyCheck).where(MyCheck.analysis_id == analysis.id)
+        )
+    ).all()
+    assert len(saved) == 1
+
+
+@pytest.mark.asyncio
+async def test_save_my_checks_rejects_another_users_scan(client, session):
+    await _user_with_profile(client, session)
+    other = User(device_token=hash_token(OTHER_V4))
+    session.add(other)
+    await session.commit()
+    other_check = await _add_check(
+        session, other.id, "남의메뉴", datetime.now(UTC), None
+    )
+    analysis = await session.get(Analysis, other_check.analysis_id)
+
+    r = client.post(
+        "/api/my-checks", headers=H, json={"scan_id": analysis.scan_id}
+    )
+
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_save_my_checks_rejects_scan_without_analysis(client, session):
+    user_id = await _user_with_profile(client, session)
+    scan = Scan(user_id=user_id, image_url="not-analyzed.jpg")
+    session.add(scan)
+    await session.commit()
+
+    r = client.post("/api/my-checks", headers=H, json={"scan_id": scan.id})
+
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "NOT_FOUND"
