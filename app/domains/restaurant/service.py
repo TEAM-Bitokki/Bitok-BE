@@ -228,6 +228,8 @@ async def _with_staff(
 ) -> dict[int, list[dict]]:
     """최신 분석에 없어도 직원이 들어간다, 모르겠다고 한 재료는 판정에 넣는다"""
     told = {n for f in facts.values() for (_, n), a in f.items() if a != StaffAnswer.NO}
+    if not told:
+        return latest
     found = {n: with_sources({n}) for n in told}
     rows = await session.execute(
         select(
@@ -256,7 +258,6 @@ async def _with_staff(
                         "ingredient_en": info[n].name_en,
                         "tags": sorted(info[n].allergen_tags),
                         "likelihood": Likelihood.POSSIBLE,
-                        "source": "staff",
                         "via": [],
                     },
                 )
