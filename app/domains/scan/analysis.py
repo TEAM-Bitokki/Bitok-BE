@@ -25,6 +25,7 @@ from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
 from app.domains.check.models import MyCheck
 from app.domains.profile.models import DietaryProfile
+from app.domains.restaurant.models import Restaurant, RestaurantMenuItem
 from app.domains.scan import judge as judging
 from app.domains.scan.dish import DishInfo, describe_dishes
 from app.domains.scan.judge import ASK_FOR_TAG, Rules, load_rules, status
@@ -71,12 +72,14 @@ async def analyze(
     infos = await describe_dishes(ask)
 
     locked = (
-        select(Scan.id)
+        select(Scan.id, Scan.restaurant_id)
         .where(Scan.id == scan_id, Scan.user_id == user_id)
         .with_for_update()
     )
-    if await session.scalar(locked) is None:  # 같은 스캔을 두 번 보내면 차례로
+    row = (await session.execute(locked)).first()  # 같은 스캔을 두 번 보내면 차례로
+    if row is None:
         raise BitokError(ErrorCode.NOT_FOUND, "없는 스캔입니다.", 404)
+    restaurant_id = row.restaurant_id
     await _not_saved(session, scan_id)
     await session.execute(
         select(DietaryProfile.id)
@@ -121,6 +124,10 @@ async def analyze(
         for n, (d, i, _, ko, en, target) in enumerate(asks, 1)
     ]
     session.add_all(analyses + questions)
+    if restaurant_id is not None:
+        await _record_menus(
+            session, restaurant_id, {dish_ids[k]: name for k, name in menus.items()}
+        )
     await session.commit()
 
     return AnalyzeResponse(
@@ -465,6 +472,30 @@ async def _matches(
         {d: list(matches[d].values()) for d in dish_ids},
         {d: possible[d] for d in dish_ids},
     )
+
+
+async def _record_menus(
+    session: AsyncSession, restaurant_id: int, names: dict[int, str]
+) -> None:
+    """식당 상세의 Checked Menu. 처음 확인한 메뉴만큼 지도 핀 숫자를 올린다"""
+    added = await session.scalars(
+        insert(RestaurantMenuItem)
+        .values(
+            [
+                {"restaurant_id": restaurant_id, "dish_id": d, "raw_ocr_name": name}
+                for d, name in names.items()
+            ]
+        )
+        .on_conflict_do_nothing(constraint="uq_restaurant_dish")
+        .returning(RestaurantMenuItem.id)
+    )
+    count = len(added.all())
+    if count:
+        await session.execute(
+            update(Restaurant)
+            .where(Restaurant.id == restaurant_id)
+            .values(checked_menu_count=Restaurant.checked_menu_count + count)
+        )
 
 
 async def _not_saved(session: AsyncSession, scan_id: int) -> None:
