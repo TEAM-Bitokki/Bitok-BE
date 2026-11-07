@@ -2,8 +2,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
+from app.core.db import SessionDep
 from app.core.deps import CurrentUser
 from app.core.errors import UNAUTHORIZED, responses
+from app.domains.check import service
 from app.domains.check.schemas import MyCheckListResponse, SaveRequest
 
 router = APIRouter(prefix="/api/my-checks", tags=["저장한 메뉴"])
@@ -20,10 +22,12 @@ router = APIRouter(prefix="/api/my-checks", tags=["저장한 메뉴"])
 )
 async def list_my_checks(
     user_id: CurrentUser,
+    session: SessionDep,
     cursor: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> MyCheckListResponse:
-    raise NotImplementedError
+    # 라우터는 인증·쿼리 파라미터를 받고, 조회와 판정은 service에 맡긴다.
+    return await service.list_my_checks(session, user_id, cursor, limit)
 
 
 @router.post(
