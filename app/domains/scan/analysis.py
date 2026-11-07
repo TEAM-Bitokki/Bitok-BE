@@ -471,7 +471,7 @@ async def _questions(
     matches: dict[int, list[dict]],
     possible: dict[int, list[str]],
     rules: Rules,
-) -> list[tuple[int, int, str, str, str]]:
+) -> list[tuple[int, int, str, str, str, str | None]]:
     """(dish_id, ingredient_id, 물은 재료, 질문, 영어 질문, target). 알레르기를 먼저 묻는다"""
     allergens = await _allergens(session, rules)
     words = await _diet_words(session, rules)

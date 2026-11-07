@@ -194,3 +194,8 @@ async def test_answers_and_result_are_private(client, session, scan, monkeypatch
 async def test_result_before_analysis_404(client, session, scan):
     await profile(client, session)
     assert result(client, scan).status_code == 404
+
+
+@pytest.mark.nodb
+def test_scan_id_out_of_bigint_422(client):
+    assert client.get(f"/api/scans/{2**63}/result", headers=H).status_code == 422

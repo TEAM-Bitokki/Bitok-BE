@@ -20,7 +20,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.add_column("staff_questions", sa.Column("target", sa.String(80), nullable=True))
-    op.add_column("staff_checks", sa.Column("target", sa.String(80), nullable=True))
     op.add_column("staff_questions", sa.Column("answer", sa.String(10), nullable=True))
     op.add_column(
         "staff_questions",
@@ -42,6 +41,7 @@ def upgrade() -> None:
         "staff_questions",
         "answer IS NULL OR answer IN ('yes','no','unsure')",
     )
+    op.add_column("staff_checks", sa.Column("target", sa.String(80), nullable=True))
 
 
 def downgrade() -> None:

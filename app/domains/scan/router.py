@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi import APIRouter, File, Form, Path, UploadFile, status
 
 from app.core.db import SessionDep
 from app.core.deps import CurrentUser
@@ -15,6 +15,8 @@ from app.domains.scan.schemas import (
 )
 
 router = APIRouter(prefix="/api/scans", tags=["스캔/분석"])
+
+ScanId = Annotated[int, Path(ge=1, le=2**63 - 1)]  # BIGINT
 
 
 @router.post(
@@ -93,7 +95,7 @@ async def create_scan(
     ),
 )
 async def analyze(
-    scan_id: int,
+    scan_id: ScanId,
     body: AnalyzeRequest,
     user_id: CurrentUser,
     session: SessionDep,
@@ -113,7 +115,7 @@ async def analyze(
     responses=responses(UNAUTHORIZED, (404, "없는 질문")),
 )
 async def answer(
-    scan_id: int,
+    scan_id: ScanId,
     body: AnswerRequest,
     user_id: CurrentUser,
     session: SessionDep,
@@ -138,6 +140,6 @@ async def answer(
     ),
 )
 async def result(
-    scan_id: int, user_id: CurrentUser, session: SessionDep
+    scan_id: ScanId, user_id: CurrentUser, session: SessionDep
 ) -> ResultResponse:
     return await staff.result(session, user_id, scan_id)
