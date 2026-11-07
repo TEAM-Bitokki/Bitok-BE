@@ -22,6 +22,14 @@ def test_sign_up_creates_account(client):
     assert body["allergen_count"] == 0
 
 
+def test_sign_up_trims_nickname(client):
+    r = client.post(
+        "/api/auth/sign-up", json={"device_token": V4, "nickname": "  Sarah  "}
+    )
+    assert r.status_code == 200
+    assert r.json()["nickname"] == "Sarah"
+
+
 def test_sign_up_is_idempotent(client):
     """앱이 재시도해도 계정이 둘로 늘지 않아야 한다"""
     first = client.post("/api/auth/sign-up", json={"device_token": V4}).json()
@@ -83,6 +91,82 @@ def test_me_requires_registered_token(client):
     assert client.get("/api/auth/me", headers=H).status_code == 401
     client.post("/api/auth/sign-up", json={"device_token": V4})
     assert client.get("/api/auth/me", headers=H).status_code == 200
+
+
+def test_update_nickname(client):
+    client.post(
+        "/api/auth/sign-up", json={"device_token": V4, "nickname": "Sarah"}
+    )
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "현영"}
+    )
+
+    assert r.status_code == 200
+    assert r.json()["nickname"] == "현영"
+    assert client.get("/api/auth/me", headers=H).json()["nickname"] == "현영"
+
+
+def test_update_nickname_requires_registered_token(client):
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "현영"}
+    )
+    assert r.status_code == 401
+
+
+def test_update_nickname_rejects_more_than_20_characters(client):
+    client.post("/api/auth/sign-up", json={"device_token": V4})
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "가" * 21}
+    )
+
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_update_nickname_trims_whitespace(client):
+    client.post("/api/auth/sign-up", json={"device_token": V4})
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "  현영  "}
+    )
+
+    assert r.status_code == 200
+    assert r.json()["nickname"] == "현영"
+
+
+@pytest.mark.parametrize("nickname", ["", " ", "\t\n"])
+def test_update_nickname_rejects_blank_value(client, nickname):
+    client.post("/api/auth/sign-up", json={"device_token": V4})
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": nickname}
+    )
+
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_update_nickname_commits_after_response_is_built(
+    session, monkeypatch
+):
+    user = User(device_token=hash_token(V4), nickname="기존닉네임")
+    session.add(user)
+    await session.commit()
+
+    async def fail_to_build_response(*args):
+        raise RuntimeError("응답 생성 실패")
+
+    monkeypatch.setattr(service, "get_me", fail_to_build_response)
+
+    with pytest.raises(RuntimeError):
+        await service.update_nickname(session, user.id, "새닉네임")
+
+    await session.rollback()
+    await session.refresh(user)
+    assert user.nickname == "기존닉네임"
 
 
 def test_delete_needs_agreement(client):

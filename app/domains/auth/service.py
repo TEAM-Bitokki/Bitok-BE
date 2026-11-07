@@ -69,6 +69,26 @@ async def get_me(session: AsyncSession, user_id: int) -> MeResponse:
     )
 
 
+async def update_nickname(
+    session: AsyncSession, user_id: int, nickname: str
+) -> MeResponse:
+    """현재 로그인한 사용자의 닉네임을 수정하고 갱신된 계정 정보를 반환한다."""
+    # 인증 과정에서 확인한 user_id로 users 테이블의 사용자를 조회한다.
+    user = await session.get(User, user_id)
+    if user is None:
+        # 인증을 지난 뒤 다른 요청이 탈퇴시킨 경우
+        raise unauthorized()
+
+    # SQLAlchemy가 객체의 변경을 감지하며, flush할 때 현재 트랜잭션에 반영한다.
+    user.nickname = nickname
+    await session.flush()
+
+    # 기존 내 정보 응답 형식을 재사용해 프로필 여부와 알레르기 수도 함께 반환한다.
+    response = await get_me(session, user_id)
+    await session.commit()
+    return response
+
+
 async def delete_account(
     session: AsyncSession, user_id: int, delete_saved_menus: bool
 ) -> None:
