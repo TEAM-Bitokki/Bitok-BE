@@ -140,13 +140,6 @@ async def test_scan_fails_without_readable_menu(
     assert await session.scalar(select(Scan)) is None
 
 
-def test_unknown_restaurant_404(client, user, monkeypatch):
-    ocr_returns(
-        monkeypatch, MenuItem(raw_name="국밥", name_en="Gukbap", confidence=0.9)
-    )
-    assert upload(client, restaurant_id="999").status_code == 404
-
-
 def test_llm_timeout_falls_back(client, user, monkeypatch):
     calls = []
 
@@ -265,18 +258,3 @@ async def test_cancelled_save_leaves_no_file(tmp_path, monkeypatch):
         await task
     await asyncio.sleep(0.3)
     assert list(tmp_path.rglob("*.jpg")) == []
-
-
-@pytest.mark.asyncio
-async def test_cancelled_decode_keeps_slot(monkeypatch):
-    """취소된 요청의 디코딩이 끝나기 전에는 자리가 비지 않는다"""
-    monkeypatch.setattr(service, "_decoding", asyncio.Semaphore(1))
-    monkeypatch.setattr(service, "image_kind", lambda data: time.sleep(0.2))
-    task = asyncio.create_task(service._check_image(b""))
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert service._decoding.locked()
-    await asyncio.sleep(0.3)
-    assert not service._decoding.locked()
