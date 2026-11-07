@@ -158,19 +158,21 @@ async def _merge_alias_rows(
                 """),
             {"new": ids[ko], "old": old},
         )
-        for column in ("ingredient_id", "source_id"):
-            await session.execute(
-                text(f"""
-                    INSERT INTO dish_ingredient_sources (dish_id, ingredient_id, source_id)
+        await session.execute(
+            text("""
+                INSERT INTO dish_ingredient_sources (dish_id, ingredient_id, source_id)
+                SELECT dish_id, i, s FROM (
                     SELECT dish_id,
                         CASE WHEN ingredient_id = :old THEN :new ELSE ingredient_id END,
                         CASE WHEN source_id = :old THEN :new ELSE source_id END
                     FROM dish_ingredient_sources
-                    WHERE {column} = :old AND ingredient_id <> source_id
-                    ON CONFLICT DO NOTHING
-                    """),
-                {"new": ids[ko], "old": old},
-            )
+                    WHERE ingredient_id = :old OR source_id = :old
+                ) AS moved (dish_id, i, s)
+                WHERE i <> s
+                ON CONFLICT DO NOTHING
+                """),
+            {"new": ids[ko], "old": old},
+        )
         await session.execute(
             delete(DishIngredientSource).where(
                 (DishIngredientSource.ingredient_id == old)
