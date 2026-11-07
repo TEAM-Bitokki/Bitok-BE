@@ -79,12 +79,14 @@ async def update_nickname(
         # 인증을 지난 뒤 다른 요청이 탈퇴시킨 경우
         raise unauthorized()
 
-    # SQLAlchemy가 객체의 변경을 감지하며, commit할 때 실제 DB에 반영한다.
+    # SQLAlchemy가 객체의 변경을 감지하며, flush할 때 현재 트랜잭션에 반영한다.
     user.nickname = nickname
-    await session.commit()
+    await session.flush()
 
     # 기존 내 정보 응답 형식을 재사용해 프로필 여부와 알레르기 수도 함께 반환한다.
-    return await get_me(session, user_id)
+    response = await get_me(session, user_id)
+    await session.commit()
+    return response
 
 
 async def delete_account(
