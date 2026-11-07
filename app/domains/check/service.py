@@ -1,4 +1,4 @@
-"""확인 결과 저장과 저장한 메뉴 목록 조회"""
+"""저장한 메뉴 목록 조회"""
 
 import base64
 import binascii
@@ -15,60 +15,7 @@ from app.domains.check.models import MyCheck
 from app.domains.check.schemas import MyCheckItem, MyCheckListResponse
 from app.domains.restaurant.models import Restaurant
 from app.domains.scan.judge import judge, load_rules
-from app.domains.scan.models import Analysis, Scan
-
-
-async def save_my_checks(
-    session: AsyncSession,
-    user_id: int,
-    scan_id: int,
-) -> None:
-    """내 스캔에 속한 메뉴별 분석 결과를 My Checks에 저장한다."""
-    # scan_id만으로 조회하면 다른 사용자의 결과를 저장할 수 있으므로 소유자 조건을 함께 건다.
-    scan = await session.scalar(
-        select(Scan).where(Scan.id == scan_id, Scan.user_id == user_id)
-    )
-    if scan is None:
-        # 다른 사용자의 스캔인지 여부도 노출하지 않고 동일하게 404로 응답한다.
-        raise BitokError(
-            ErrorCode.NOT_FOUND,
-            "스캔을 찾을 수 없습니다.",
-            status_code=404,
-        )
-
-    analysis_ids = list(
-        await session.scalars(
-            select(Analysis.id).where(Analysis.scan_id == scan_id)
-        )
-    )
-    if not analysis_ids:
-        # 분석 전 스캔은 저장할 확인 결과가 없으므로 빈 성공으로 처리하지 않는다.
-        raise BitokError(
-            ErrorCode.NOT_FOUND,
-            "저장할 분석 결과가 없습니다.",
-            status_code=404,
-        )
-
-    # 버튼 연타나 네트워크 재시도로 같은 요청이 다시 와도 중복 행을 만들지 않는다.
-    saved_analysis_ids = set(
-        await session.scalars(
-            select(MyCheck.analysis_id).where(
-                MyCheck.user_id == user_id,
-                MyCheck.analysis_id.in_(analysis_ids),
-            )
-        )
-    )
-    session.add_all(
-        MyCheck(
-            user_id=user_id,
-            analysis_id=analysis_id,
-            # 식당 없이 분석한 경우에는 NULL을 그대로 보존한다.
-            restaurant_id=scan.restaurant_id,
-        )
-        for analysis_id in analysis_ids
-        if analysis_id not in saved_analysis_ids
-    )
-    await session.commit()
+from app.domains.scan.models import Analysis
 
 
 def _encode_cursor(saved_at: datetime, my_check_id: int) -> str:
