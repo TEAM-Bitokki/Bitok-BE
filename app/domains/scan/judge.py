@@ -92,10 +92,14 @@ async def load_facts(
     )
     facts = defaultdict(dict)
     for scan_id, dish_id, target, name, answer in rows:
-        menu = facts[scan_id, dish_id]
-        old = menu.get((target, name), answer)
-        menu[(target, name)] = min(old, answer, key=CAUTION.index)
+        add_fact(facts[scan_id, dish_id], (target, name), answer)
     return facts
+
+
+def add_fact(facts: Facts, key: tuple[str | None, str], answer: str) -> None:
+    """같은 것을 여러 번 답했으면 조심스러운 답을 남긴다"""
+    old = facts.get(key, answer)
+    facts[key] = min(old, answer, key=CAUTION.index)
 
 
 def status(match: dict, rules: Rules) -> MatchStatus:
