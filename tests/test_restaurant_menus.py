@@ -55,6 +55,30 @@ async def test_analyze_records_restaurant_menus(client, session, scan, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_pin_follows_remaining_analyses(client, session, scan, monkeypatch):
+    """다시 분석하거나 기록째 탈퇴하면 핀 숫자와 Checked Menu 가 같이 줄어든다"""
+    await profile(client, session)
+    llm_knows(monkeypatch, KIMCHI, NAENGMYEON)
+    r = await place(session, scan)
+    analyze(client, scan, "김치찌개")
+    analyze(client, scan, "냉면")
+
+    await session.refresh(r)
+    menus = client.get(url(r), headers=H).json()["checked_menus"]
+    assert r.checked_menu_count == 1
+    assert [m["name_ko"] for m in menus] == ["냉면"]
+
+    client.request(
+        "DELETE",
+        "/api/users/me",
+        headers=H,
+        json={"agree": True, "delete_saved_menus": True},
+    )
+    await session.refresh(r)
+    assert r.checked_menu_count == 0
+
+
+@pytest.mark.asyncio
 async def test_detail_one_row_per_menu_latest_first(client, session, scan, monkeypatch):
     await profile(client, session)
     llm_knows(monkeypatch, KIMCHI, NAENGMYEON)
@@ -117,6 +141,40 @@ async def test_public_answers_worst_wins(
         ("새우", verdict)
     ]
     assert detail["last_checked_at"] is not None
+
+
+@pytest.mark.parametrize("value,verdict", [("yes", "avoid"), ("unsure", "not_sure")])
+@pytest.mark.asyncio
+async def test_staff_answer_counts_without_latest_match(
+    client, session, scan, monkeypatch, value, verdict
+):
+    """최신 분석에 새우가 없어도 누가 새우가 들어간다고 들었으면 avoid"""
+    await profile(client, session, ["새우"])
+    llm_knows(
+        monkeypatch, info("제육덮밥", "Jeyukdeopbap", typical=[("돼지고기", "Pork")])
+    )
+    r = await place(session, scan)
+    menu = analyze(client, scan, "제육덮밥").json()["menus"][0]
+    shrimp = await session.scalar(
+        select(Ingredient.id).where(Ingredient.name_ko == "새우")
+    )
+    session.add(
+        StaffCheck(
+            restaurant_id=r.id,
+            dish_id=menu["dish_id"],
+            ingredient_id=shrimp,
+            answer=value,
+        )
+    )
+    await session.commit()
+
+    [item] = client.get(url(r, "/menus/for-you"), headers=H).json()["items"]
+    detail = client.get(url(r, f"/menus/{menu['dish_id']}"), headers=H).json()
+
+    assert item["verdict"] == verdict
+    assert [(m["ingredient"], m["verdict"]) for m in detail["matches"]] == [
+        ("새우", verdict)
+    ]
 
 
 @pytest.mark.asyncio

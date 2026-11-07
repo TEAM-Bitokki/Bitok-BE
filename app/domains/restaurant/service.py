@@ -4,16 +4,18 @@ import math
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import delete, exists, func, select, tuple_, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.cursor import decode_cursor, encode_cursor
+from app.common.dictionary import with_sources
 from app.common.models import Dish, Ingredient
-from app.common.schemas import DishBrief, Page
+from app.common.schemas import DishBrief, Likelihood, Page, StaffAnswer
 from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
 from app.domains.restaurant.menu import menu_detail as build_detail
-from app.domains.restaurant.models import Restaurant
+from app.domains.restaurant.models import Restaurant, RestaurantMenuItem
 from app.domains.restaurant.schemas import (
     MenuDetailResponse,
     PersonalizedMenuItem,
@@ -24,6 +26,58 @@ from app.domains.restaurant.schemas import (
 from app.domains.saved.models import SavedRestaurant
 from app.domains.scan.judge import Facts, Rules, add_fact, judge, load_rules
 from app.domains.scan.models import Analysis, Scan, StaffCheck
+
+
+async def sync_menus(
+    session: AsyncSession,
+    restaurant_ids: list[int],
+    names: dict[int, str] | None = None,
+) -> None:
+    """Checked Menu 와 지도 핀 숫자를 지금 남은 분석에 맞춘다. names 는 새로 분석한 메뉴"""
+    if not restaurant_ids:
+        return
+    ids = sorted(set(restaurant_ids))
+    await session.execute(  # 같은 식당을 동시에 고치면 차례로
+        select(Restaurant.id)
+        .where(Restaurant.id.in_(ids))
+        .order_by(Restaurant.id)
+        .with_for_update()
+    )
+    if names:
+        [restaurant_id] = ids
+        await session.execute(
+            insert(RestaurantMenuItem)
+            .values(
+                [
+                    {"restaurant_id": restaurant_id, "dish_id": d, "raw_ocr_name": n}
+                    for d, n in names.items()
+                ]
+            )
+            .on_conflict_do_nothing(constraint="uq_restaurant_dish")
+        )
+    analyzed = (
+        select(Analysis.id)
+        .join(Scan, Scan.id == Analysis.scan_id)
+        .where(
+            Scan.restaurant_id == RestaurantMenuItem.restaurant_id,
+            Analysis.dish_id == RestaurantMenuItem.dish_id,
+        )
+    )
+    await session.execute(
+        delete(RestaurantMenuItem).where(
+            RestaurantMenuItem.restaurant_id.in_(ids), ~exists(analyzed)
+        )
+    )
+    count = (
+        select(func.count())
+        .where(RestaurantMenuItem.restaurant_id == Restaurant.id)
+        .scalar_subquery()
+    )
+    await session.execute(
+        update(Restaurant)
+        .where(Restaurant.id.in_(ids))
+        .values(checked_menu_count=count)
+    )
 
 
 def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> int:
@@ -169,6 +223,51 @@ async def load_public_facts(
     return facts, checked
 
 
+async def _with_staff(
+    session: AsyncSession, latest: dict[int, list[dict]], facts: dict[int, Facts]
+) -> dict[int, list[dict]]:
+    """최신 분석에 없어도 직원이 들어간다, 모르겠다고 한 재료는 판정에 넣는다"""
+    told = {n for f in facts.values() for (_, n), a in f.items() if a != StaffAnswer.NO}
+    found = {n: with_sources({n}) for n in told}
+    rows = await session.execute(
+        select(
+            Ingredient.id,
+            Ingredient.name_ko,
+            Ingredient.name_en,
+            Ingredient.allergen_tags,
+        ).where(Ingredient.name_ko.in_(set().union(*found.values())))
+    )
+    info = {r.name_ko: r for r in rows}
+    out = {}
+    for dish_id, matches in latest.items():
+        by_name = {
+            m["ingredient"]: {**m, "via": list(m.get("via") or [])} for m in matches
+        }
+        for (target, name), answer in facts.get(dish_id, {}).items():
+            if answer == StaffAnswer.NO:
+                continue
+            row = target or name
+            for n in sorted(found[name] & info.keys()):
+                m = by_name.setdefault(
+                    n,
+                    {
+                        "ingredient_id": info[n].id,
+                        "ingredient": n,
+                        "ingredient_en": info[n].name_en,
+                        "tags": sorted(info[n].allergen_tags),
+                        "likelihood": Likelihood.POSSIBLE,
+                        "source": "staff",
+                        "via": [],
+                    },
+                )
+                if row not in m["via"]:
+                    m["via"].append(row)
+                if answer == StaffAnswer.YES:
+                    m["likelihood"] = Likelihood.TYPICAL
+        out[dish_id] = list(by_name.values())
+    return out
+
+
 async def for_you(
     session: AsyncSession, user_id: int, restaurant_id: int
 ) -> PersonalizedMenuResponse:
@@ -176,6 +275,7 @@ async def for_you(
     rules = await _rules(session, user_id)
     rows = await _latest(session, restaurant_id)
     facts, _ = await load_public_facts(session, restaurant_id, [d.id for _, d in rows])
+    matches = await _with_staff(session, {d.id: a.matches for a, d in rows}, facts)
     return PersonalizedMenuResponse(
         items=[
             PersonalizedMenuItem(
@@ -183,7 +283,7 @@ async def for_you(
                 name_ko=d.name_ko,
                 name_en=d.name_en,
                 analysis_id=a.id,
-                verdict=judge(a.matches, rules, facts.get(d.id)),
+                verdict=judge(matches[d.id], rules, facts.get(d.id)),
             )
             for a, d in rows
         ]
@@ -202,4 +302,12 @@ async def menu_detail(
         )
     [(a, d)] = rows
     facts, checked = await load_public_facts(session, restaurant_id, [dish_id])
-    return build_detail(d, a.matches, rules, facts.get(dish_id), checked.get(dish_id))
+    matches = await _with_staff(session, {dish_id: a.matches}, facts)
+    return build_detail(
+        d,
+        matches[dish_id],
+        rules,
+        facts.get(dish_id),
+        checked.get(dish_id),
+        common=a.matches,
+    )

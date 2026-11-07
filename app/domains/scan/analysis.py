@@ -25,7 +25,7 @@ from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
 from app.domains.check.models import MyCheck
 from app.domains.profile.models import DietaryProfile
-from app.domains.restaurant.models import Restaurant, RestaurantMenuItem
+from app.domains.restaurant.service import sync_menus
 from app.domains.scan import judge as judging
 from app.domains.scan.dish import DishInfo, describe_dishes
 from app.domains.scan.judge import ASK_FOR_TAG, Rules, load_rules, status
@@ -125,8 +125,9 @@ async def analyze(
     ]
     session.add_all(analyses + questions)
     if restaurant_id is not None:
-        await _record_menus(
-            session, restaurant_id, {dish_ids[k]: name for k, name in menus.items()}
+        await session.flush()
+        await sync_menus(
+            session, [restaurant_id], {dish_ids[k]: n for k, n in menus.items()}
         )
     await session.commit()
 
@@ -472,30 +473,6 @@ async def _matches(
         {d: list(matches[d].values()) for d in dish_ids},
         {d: possible[d] for d in dish_ids},
     )
-
-
-async def _record_menus(
-    session: AsyncSession, restaurant_id: int, names: dict[int, str]
-) -> None:
-    """식당 상세의 Checked Menu. 처음 확인한 메뉴만큼 지도 핀 숫자를 올린다"""
-    added = await session.scalars(
-        insert(RestaurantMenuItem)
-        .values(
-            [
-                {"restaurant_id": restaurant_id, "dish_id": d, "raw_ocr_name": name}
-                for d, name in names.items()
-            ]
-        )
-        .on_conflict_do_nothing(constraint="uq_restaurant_dish")
-        .returning(RestaurantMenuItem.id)
-    )
-    count = len(added.all())
-    if count:
-        await session.execute(
-            update(Restaurant)
-            .where(Restaurant.id == restaurant_id)
-            .values(checked_menu_count=Restaurant.checked_menu_count + count)
-        )
 
 
 async def _not_saved(session: AsyncSession, scan_id: int) -> None:

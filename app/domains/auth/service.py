@@ -13,6 +13,7 @@ from app.domains.auth.models import User
 from app.domains.auth.schemas import MeResponse
 from app.domains.check.models import MyCheck
 from app.domains.profile.models import DietaryProfile, ProfileAllergen
+from app.domains.restaurant.service import sync_menus
 from app.domains.scan.models import Scan
 
 log = logging.getLogger(__name__)
@@ -99,8 +100,16 @@ async def delete_account(
         images = list(
             await session.scalars(select(Scan.image_url).where(Scan.user_id == user_id))
         )
+        places = list(
+            await session.scalars(
+                select(Scan.restaurant_id)
+                .where(Scan.user_id == user_id, Scan.restaurant_id.is_not(None))
+                .distinct()
+            )
+        )
         await session.execute(delete(MyCheck).where(MyCheck.user_id == user_id))
         await session.execute(delete(Scan).where(Scan.user_id == user_id))
+        await sync_menus(session, places)  # 지운 분석만큼 핀 숫자도
     await session.execute(delete(User).where(User.id == user_id))
     await session.commit()
     for key in images:  # 탈퇴는 이미 끝났다. 사진 하나 못 지웠다고 실패로 돌리지 않는다
