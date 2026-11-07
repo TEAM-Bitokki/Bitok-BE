@@ -1,7 +1,9 @@
 from fastapi import APIRouter, status
 
+from app.core.db import SessionDep
 from app.core.deps import CurrentUser
 from app.core.errors import UNAUTHORIZED, responses
+from app.domains.saved import service
 from app.domains.saved.schemas import (
     SavedRestaurantListResponse,
     SaveRestaurantRequest,
@@ -17,8 +19,10 @@ router = APIRouter(prefix="/api/saved-restaurants", tags=["저장한 식당"])
     description="My > Saved Restaurants. 최신순.",
     responses=responses(UNAUTHORIZED),
 )
-async def list_saved(user_id: CurrentUser) -> SavedRestaurantListResponse:
-    raise NotImplementedError
+async def list_saved(
+    user_id: CurrentUser, session: SessionDep
+) -> SavedRestaurantListResponse:
+    return await service.list_saved_restaurants(session, user_id)
 
 
 @router.post(
@@ -31,8 +35,9 @@ async def list_saved(user_id: CurrentUser) -> SavedRestaurantListResponse:
 async def save_restaurant(
     body: SaveRestaurantRequest,
     user_id: CurrentUser,
+    session: SessionDep,
 ) -> None:
-    raise NotImplementedError
+    await service.save_restaurant(session, user_id, body.restaurant_id)
 
 
 @router.delete(
@@ -41,5 +46,7 @@ async def save_restaurant(
     summary="식당 저장 해제",
     responses=responses(UNAUTHORIZED, (404, "저장되지 않은 식당")),
 )
-async def unsave_restaurant(restaurant_id: int, user_id: CurrentUser) -> None:
-    raise NotImplementedError
+async def unsave_restaurant(
+    restaurant_id: int, user_id: CurrentUser, session: SessionDep
+) -> None:
+    await service.unsave_restaurant(session, user_id, restaurant_id)
