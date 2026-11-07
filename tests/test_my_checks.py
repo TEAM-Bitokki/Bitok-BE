@@ -1,5 +1,7 @@
-"""저장한 메뉴 목록 조회 API"""
+"""저장한 메뉴"""
 
+import base64
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -12,6 +14,8 @@ from app.domains.check.models import MyCheck
 from app.domains.profile.models import DietaryProfile, ProfileAllergen
 from app.domains.restaurant.models import Restaurant
 from app.domains.scan.models import Analysis, Scan
+from tests.test_analyze import KIMCHI, analyze, info, llm_knows, profile
+from tests.test_staff import answer
 
 V4 = "550e8400-e29b-41d4-a716-446655440000"
 OTHER_V4 = "550e8400-e29b-41d4-a716-446655440001"
@@ -19,9 +23,9 @@ H = {"deviceToken": V4}
 
 
 async def _user_with_profile(client, session, token: str = V4) -> int:
-    user_id = client.post(
-        "/api/auth/sign-up", json={"device_token": token}
-    ).json()["user_id"]
+    user_id = client.post("/api/auth/sign-up", json={"device_token": token}).json()[
+        "user_id"
+    ]
     session.add(DietaryProfile(user_id=user_id, diet_type="none", blocked_tags={}))
     await session.commit()
     return user_id
@@ -116,7 +120,9 @@ async def test_list_my_checks_is_newest_first_and_private(client, session):
     session.add(other)
     await session.commit()
     now = datetime.now(UTC)
-    older = await _add_check(session, user_id, "이전메뉴", now - timedelta(days=1), None)
+    older = await _add_check(
+        session, user_id, "이전메뉴", now - timedelta(days=1), None
+    )
     newer = await _add_check(session, user_id, "최근메뉴", now, None)
     await _add_check(
         session,
@@ -171,8 +177,7 @@ async def test_list_my_checks_uses_cursor(client, session):
     user_id = await _user_with_profile(client, session)
     now = datetime.now(UTC)
     checks = [
-        await _add_check(session, user_id, f"메뉴{i}", now, None)
-        for i in range(3)
+        await _add_check(session, user_id, f"메뉴{i}", now, None) for i in range(3)
     ]
 
     first = client.get("/api/my-checks?limit=2", headers=H).json()
@@ -192,10 +197,80 @@ async def test_list_my_checks_uses_cursor(client, session):
     assert second["page"] == {"next_cursor": None, "has_more": False}
 
 
-def test_list_my_checks_rejects_invalid_cursor(client):
+def _cursor(my_check_id) -> str:
+    raw = json.dumps({"saved_at": "2026-11-08T11:30:00+00:00", "id": my_check_id})
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+@pytest.mark.parametrize("cursor", ["not-a-cursor", _cursor(0), _cursor(2**63)])
+def test_list_my_checks_rejects_invalid_cursor(client, cursor):
     client.post("/api/auth/sign-up", json={"device_token": V4})
 
-    r = client.get("/api/my-checks?cursor=not-a-cursor", headers=H)
+    r = client.get("/api/my-checks", headers=H, params={"cursor": cursor})
 
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def save(client, scan_id, headers=H):
+    return client.post("/api/my-checks", headers=headers, json={"scan_id": scan_id})
+
+
+@pytest.mark.asyncio
+async def test_save_keeps_every_menu_once(client, session, scan, monkeypatch):
+    """스캔의 메뉴를 전부 저장한다. 두 번 눌러도 한 번만"""
+    place = Restaurant(kakao_place_id="1", name="명동교자", lat=37.56, lng=126.98)
+    session.add(place)
+    await session.flush()
+    (await session.get(Scan, scan)).restaurant_id = place.id
+    await session.commit()
+    await profile(client, session)
+    llm_knows(monkeypatch, KIMCHI, info("냉면", "Naengmyeon"))
+    analyze(client, scan, "김치찌개", "냉면")
+
+    assert save(client, scan).status_code == 204
+    assert save(client, scan).status_code == 204
+    items = client.get("/api/my-checks", headers=H).json()["items"]
+
+    assert sorted(i["name_ko"] for i in items) == ["김치찌개", "냉면"]
+    assert {i["restaurant_name"] for i in items} == {"명동교자"}
+
+
+@pytest.mark.asyncio
+async def test_list_uses_staff_answers(client, session, scan, monkeypatch):
+    """직원이 새우젓이 없다고 했으면 저장한 메뉴도 safe"""
+    await profile(client, session, ["새우"])
+    llm_knows(monkeypatch, KIMCHI)
+    [q] = analyze(client, scan, "김치찌개").json()["questions"]
+    answer(client, scan, q, "no")
+    save(client, scan)
+
+    [item] = client.get("/api/my-checks", headers=H).json()["items"]
+    assert item["verdict"] == "safe"
+
+
+@pytest.mark.asyncio
+async def test_save_needs_my_analyzed_scan(client, session, scan, monkeypatch):
+    await profile(client, session)
+    assert save(client, scan).status_code == 404  # 분석 전
+
+    llm_knows(monkeypatch, KIMCHI)
+    analyze(client, scan, "김치찌개")
+    other = {"deviceToken": OTHER_V4}
+    client.post("/api/auth/sign-up", json={"device_token": OTHER_V4})
+    assert save(client, scan, other).status_code == 404
+    assert save(client, scan + 1).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_saved_scan_cannot_be_analyzed_again(client, session, scan, monkeypatch):
+    """다시 분석하면 저장한 메뉴가 지워지므로 막는다"""
+    await profile(client, session)
+    llm_knows(monkeypatch, KIMCHI)
+    analyze(client, scan, "김치찌개")
+    save(client, scan)
+
+    r = analyze(client, scan, "김치찌개")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "ALREADY_EXISTS"
+    assert len(client.get("/api/my-checks", headers=H).json()["items"]) == 1
