@@ -15,6 +15,7 @@ from app.core.db import Base, get_session
 from app.domains.scan.models import Scan
 from app.main import app
 from app.models import Base as _  # noqa: F401  모든 모델을 metadata 에 올린다
+from scripts.seed_dictionary import build, seed
 
 
 def _test_url() -> str:
@@ -122,8 +123,6 @@ def other_session():
 @pytest_asyncio.fixture
 async def scan(client, session, monkeypatch):
     """가입한 사용자의 빈 스캔. 김치찌개가 시드에 있다 (돼지고기, 두부가 보통 들어감)"""
-    from scripts.seed_dictionary import build, seed
-
     monkeypatch.setattr(settings, "mock_llm", False)
     kimchi = {
         "food_type": "한식",
