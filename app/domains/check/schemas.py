@@ -4,7 +4,7 @@ from app.common.schemas import DishBrief, Page, Verdict
 
 
 class SaveRequest(BaseModel):
-    scan_id: int = Field(examples=[1021])
+    scan_id: int = Field(ge=1, le=2**63 - 1, examples=[1021])
 
 
 class MyCheckItem(DishBrief):
