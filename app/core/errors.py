@@ -160,18 +160,24 @@ _EXAMPLE_CODES: dict[int, ErrorCode] = {
 
 
 def responses(*specs: tuple) -> dict:
+    """(상태 코드, 설명, 에러 코드). 에러 코드를 여러 개 주면 예시도 여러 개"""
     out = {}
     for spec in specs:
         status_code, desc = spec[0], spec[1]
-        code = spec[2] if len(spec) > 2 else _EXAMPLE_CODES[status_code]
+        codes = spec[2:] or (_EXAMPLE_CODES[status_code],)
+        examples = {
+            c.value: {"value": {"error": {"code": c.value, "message": desc}}}
+            for c in codes
+        }
+        content = (
+            {"example": examples[codes[0].value]["value"]}
+            if len(codes) == 1
+            else {"examples": examples}
+        )
         out[status_code] = {
             "model": ErrorResponse,
             "description": desc,
-            "content": {
-                "application/json": {
-                    "example": {"error": {"code": code.value, "message": desc}}
-                }
-            },
+            "content": {"application/json": content},
         }
     return out
 

@@ -229,24 +229,30 @@ async def test_save_keeps_every_menu_once(client, session, scan, monkeypatch):
     analyze(client, scan, "김치찌개", "냉면")
 
     assert save(client, scan).status_code == 204
+    first = client.get("/api/my-checks", headers=H).json()["items"]
     assert save(client, scan).status_code == 204
     items = client.get("/api/my-checks", headers=H).json()["items"]
 
+    assert items == first  # 저장 id, 시각 그대로
     assert sorted(i["name_ko"] for i in items) == ["김치찌개", "냉면"]
     assert {i["restaurant_name"] for i in items} == {"명동교자"}
 
 
 @pytest.mark.asyncio
-async def test_list_uses_staff_answers(client, session, scan, monkeypatch):
-    """직원이 새우젓이 없다고 했으면 저장한 메뉴도 safe"""
+async def test_list_uses_each_scans_answers(client, session, scan, monkeypatch):
+    """같은 메뉴를 두 번 저장해도 스캔마다 그때 직원 답으로 판정한다"""
     await profile(client, session, ["새우"])
     llm_knows(monkeypatch, KIMCHI)
-    [q] = analyze(client, scan, "김치찌개").json()["questions"]
-    answer(client, scan, q, "no")
-    save(client, scan)
+    again = Scan(user_id=(await session.get(Scan, scan)).user_id, image_url="y.jpg")
+    session.add(again)
+    await session.commit()
+    for scan_id, value in ((scan, "no"), (again.id, "yes")):
+        [q] = analyze(client, scan_id, "김치찌개").json()["questions"]
+        answer(client, scan_id, q, value)
+        save(client, scan_id)
 
-    [item] = client.get("/api/my-checks", headers=H).json()["items"]
-    assert item["verdict"] == "safe"
+    items = client.get("/api/my-checks", headers=H).json()["items"]
+    assert [i["verdict"] for i in items] == ["avoid", "safe"]  # 최신순
 
 
 @pytest.mark.asyncio

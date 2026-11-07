@@ -45,6 +45,7 @@ def _decode_cursor(cursor: str) -> tuple[datetime, int]:
     except (
         binascii.Error,
         KeyError,
+        RecursionError,
         TypeError,
         UnicodeDecodeError,
         ValueError,

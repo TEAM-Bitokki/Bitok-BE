@@ -17,10 +17,16 @@ router = APIRouter(prefix="/api/my-checks", tags=["저장한 메뉴"])
     summary="저장한 메뉴 목록 조회",
     description=(
         "최신순으로 반환한다. `verdict` 는 현재 프로필 기준으로 다시 계산한 값으로 알레르기를 추가하면 바뀜."
+        "알레르기를 추가하면 바뀐다."
     ),
     responses=responses(
         UNAUTHORIZED,
-        (422, "식이 프로필 미등록 또는 잘못된 커서", ErrorCode.PROFILE_REQUIRED),
+        (
+            422,
+            "식이 프로필 미등록 또는 잘못된 커서",
+            ErrorCode.PROFILE_REQUIRED,
+            ErrorCode.VALIDATION_ERROR,
+        ),
     ),
 )
 async def list_my_checks(
