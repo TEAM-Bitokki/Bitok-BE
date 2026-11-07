@@ -73,7 +73,7 @@ class AnalyzeResponse(BaseModel):
 
 
 class AnswerRequest(BaseModel):
-    question_id: int = Field(examples=[880])
+    question_id: int = Field(ge=1, le=2**63 - 1, examples=[880])
     answer: StaffAnswer = Field(examples=["yes"])
 
 
