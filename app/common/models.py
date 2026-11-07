@@ -149,3 +149,19 @@ class DishIngredient(Base):
         CheckConstraint("likelihood IN ('typical','possible')", name="ck_likelihood"),
         CheckConstraint("source IN ('public_data','llm','curated')", name="ck_source"),
     )
+
+
+class DishIngredientSource(Base):
+    """치킨텐더 -> 닭고기. 모델이 알려준 원재료. 같은 이름도 메뉴마다 다를 수 있어 메뉴에 붙인다"""
+
+    __tablename__ = "dish_ingredient_sources"
+
+    dish_id: Mapped[int] = mapped_column(
+        ForeignKey("dishes.id", ondelete="CASCADE"), primary_key=True
+    )
+    ingredient_id: Mapped[int] = mapped_column(
+        ForeignKey("ingredients.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("ingredients.id", ondelete="CASCADE"), primary_key=True
+    )
