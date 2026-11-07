@@ -17,7 +17,6 @@ router = APIRouter(prefix="/api/my-checks", tags=["저장한 메뉴"])
     summary="저장한 메뉴 목록 조회",
     description=(
         "최신순으로 반환한다. `verdict` 는 현재 프로필 기준으로 다시 계산한 값으로 알레르기를 추가하면 바뀜."
-        "알레르기를 추가하면 바뀐다."
     ),
     responses=responses(
         UNAUTHORIZED,
@@ -35,7 +34,7 @@ async def list_my_checks(
     cursor: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> MyCheckListResponse:
-    # 라우터는 인증·쿼리 파라미터를 받고, 조회와 판정은 service에 맡긴다.
+    # 라우터는 인증, 쿼리 파라미터를 받고, 조회와 판정은 service에 맡긴다.
     return await service.list_my_checks(session, user_id, cursor, limit)
 
 
