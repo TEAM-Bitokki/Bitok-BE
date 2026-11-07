@@ -22,6 +22,14 @@ def test_sign_up_creates_account(client):
     assert body["allergen_count"] == 0
 
 
+def test_sign_up_trims_nickname(client):
+    r = client.post(
+        "/api/auth/sign-up", json={"device_token": V4, "nickname": "  Sarah  "}
+    )
+    assert r.status_code == 200
+    assert r.json()["nickname"] == "Sarah"
+
+
 def test_sign_up_is_idempotent(client):
     """앱이 재시도해도 계정이 둘로 늘지 않아야 한다"""
     first = client.post("/api/auth/sign-up", json={"device_token": V4}).json()
@@ -79,6 +87,88 @@ async def test_get_me_401s_when_account_is_gone(session):
     assert caught.value.status_code == 401
 
 
+def test_me_requires_registered_token(client):
+    assert client.get("/api/auth/me", headers=H).status_code == 401
+    client.post("/api/auth/sign-up", json={"device_token": V4})
+    assert client.get("/api/auth/me", headers=H).status_code == 200
+
+
+def test_update_nickname(client):
+    client.post(
+        "/api/auth/sign-up", json={"device_token": V4, "nickname": "Sarah"}
+    )
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "현영"}
+    )
+
+    assert r.status_code == 200
+    assert r.json()["nickname"] == "현영"
+    assert client.get("/api/auth/me", headers=H).json()["nickname"] == "현영"
+
+
+def test_update_nickname_requires_registered_token(client):
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "현영"}
+    )
+    assert r.status_code == 401
+
+
+def test_update_nickname_rejects_more_than_20_characters(client):
+    client.post("/api/auth/sign-up", json={"device_token": V4})
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "가" * 21}
+    )
+
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_update_nickname_trims_whitespace(client):
+    client.post("/api/auth/sign-up", json={"device_token": V4})
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": "  현영  "}
+    )
+
+    assert r.status_code == 200
+    assert r.json()["nickname"] == "현영"
+
+
+@pytest.mark.parametrize("nickname", ["", " ", "\t\n"])
+def test_update_nickname_rejects_blank_value(client, nickname):
+    client.post("/api/auth/sign-up", json={"device_token": V4})
+
+    r = client.patch(
+        "/api/users/me", headers=H, json={"nickname": nickname}
+    )
+
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_update_nickname_commits_after_response_is_built(
+    session, monkeypatch
+):
+    user = User(device_token=hash_token(V4), nickname="기존닉네임")
+    session.add(user)
+    await session.commit()
+
+    async def fail_to_build_response(*args):
+        raise RuntimeError("응답 생성 실패")
+
+    monkeypatch.setattr(service, "get_me", fail_to_build_response)
+
+    with pytest.raises(RuntimeError):
+        await service.update_nickname(session, user.id, "새닉네임")
+
+    await session.rollback()
+    await session.refresh(user)
+    assert user.nickname == "기존닉네임"
+
+
 def test_delete_needs_agreement(client):
     client.post("/api/auth/sign-up", json={"device_token": V4})
     r = client.request("DELETE", "/api/users/me", headers=H, json={"agree": False})
@@ -96,15 +186,11 @@ def test_delete_removes_account(client):
 @pytest.mark.asyncio
 async def test_delete_keeps_public_records(client, session):
     """delete_saved_menus=false 면 기록이 익명화되어 남는다"""
-    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()[
-        "user_id"
-    ]
+    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()["user_id"]
     await _seed_records(session, user_id)
 
     client.request(
-        "DELETE",
-        "/api/users/me",
-        headers=H,
+        "DELETE", "/api/users/me", headers=H,
         json={"agree": True, "delete_saved_menus": False},
     )
 
@@ -117,15 +203,11 @@ async def test_delete_keeps_public_records(client, session):
 @pytest.mark.asyncio
 async def test_delete_can_remove_records(client, session):
     """delete_saved_menus=true 면 분석 기록까지 사라진다"""
-    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()[
-        "user_id"
-    ]
+    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()["user_id"]
     await _seed_records(session, user_id)
 
     client.request(
-        "DELETE",
-        "/api/users/me",
-        headers=H,
+        "DELETE", "/api/users/me", headers=H,
         json={"agree": True, "delete_saved_menus": True},
     )
 
@@ -137,36 +219,28 @@ async def test_delete_can_remove_records(client, session):
 @pytest.mark.asyncio
 async def test_delete_removes_checks_on_others_analysis(client, session):
     """남의 분석을 저장한 행도 지워야 한다. scans 만 지우면 남는다"""
-    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()[
-        "user_id"
-    ]
+    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()["user_id"]
     other = User(device_token=hash_token("other"))
     session.add(other)
     await session.flush()
     other_id = other.id
     analysis_id, rest_id = await _seed_records(session, other_id)
-    session.add(
-        MyCheck(user_id=user_id, analysis_id=analysis_id, restaurant_id=rest_id)
-    )
+    session.add(MyCheck(user_id=user_id, analysis_id=analysis_id, restaurant_id=rest_id))
     await session.commit()
 
     client.request(
-        "DELETE",
-        "/api/users/me",
-        headers=H,
+        "DELETE", "/api/users/me", headers=H,
         json={"agree": True, "delete_saved_menus": True},
     )
 
     # 탈퇴한 행은 user_id 가 NULL 로 바뀌므로 user_id 로 찾으면 안 된다
     owners = (await session.scalars(select(MyCheck.user_id))).all()
     assert owners == [other_id]
-    assert await session.scalar(select(Scan)) is not None  # 남의 기록은 그대로
+    assert await session.scalar(select(Scan)) is not None   # 남의 기록은 그대로
 
 
 async def _seed_records(session, user_id: int) -> tuple[int, int]:
-    dish = Dish(
-        canonical_name="kimchijjigae", name_ko="김치찌개", name_en="Kimchi Jjigae"
-    )
+    dish = Dish(canonical_name="kimchijjigae", name_ko="김치찌개", name_en="Kimchi Jjigae")
     rest = Restaurant(kakao_place_id="1", name="명동교자", lat=37.5, lng=127.0)
     session.add_all([dish, rest])
     await session.flush()
@@ -176,8 +250,6 @@ async def _seed_records(session, user_id: int) -> tuple[int, int]:
     analysis = Analysis(scan_id=scan.id, dish_id=dish.id, verdict="safe")
     session.add(analysis)
     await session.flush()
-    session.add(
-        MyCheck(user_id=user_id, analysis_id=analysis.id, restaurant_id=rest.id)
-    )
+    session.add(MyCheck(user_id=user_id, analysis_id=analysis.id, restaurant_id=rest.id))
     await session.commit()
     return analysis.id, rest.id

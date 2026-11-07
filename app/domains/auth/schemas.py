@@ -4,6 +4,15 @@ from app.common.schemas import DietType
 from app.core.deps import canonical_uuid4
 
 
+def _normalize_nickname(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    nickname = value.strip()
+    if not nickname:
+        raise ValueError("닉네임은 한 글자 이상이어야 합니다")
+    return nickname
+
+
 class SignUpRequest(BaseModel):
     device_token: str = Field(examples=["550e8400-e29b-41d4-a716-446655440000"])
     nickname: str | None = Field(default=None, max_length=20, examples=["Hyunjin"])
@@ -15,6 +24,11 @@ class SignUpRequest(BaseModel):
         if token is None:
             raise ValueError("UUID v4 형식이어야 합니다")
         return token
+
+    @field_validator("nickname", mode="before")
+    @classmethod
+    def _check_nickname(cls, v: object) -> object:
+        return _normalize_nickname(v)
 
 
 class MeResponse(BaseModel):
@@ -29,6 +43,11 @@ class MeResponse(BaseModel):
 
 class NicknameRequest(BaseModel):
     nickname: str = Field(max_length=20, examples=["Hyunjin"])
+
+    @field_validator("nickname", mode="before")
+    @classmethod
+    def _check_nickname(cls, v: object) -> object:
+        return _normalize_nickname(v)
 
 
 class DeleteAccountRequest(BaseModel):
