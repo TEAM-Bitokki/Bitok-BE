@@ -5,8 +5,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
-from app.core.security import hash_token
-from app.domains.auth.models import User
 from app.domains.restaurant.models import Restaurant
 from app.domains.saved.models import SavedRestaurant
 
