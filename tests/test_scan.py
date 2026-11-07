@@ -13,9 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.models import Dish
-from app.core import storage
+from app.core import llm, storage
 from app.core.config import settings
-from app.domains.scan import ocr, service
+from app.domains.scan import service
 from app.domains.scan.models import Scan
 from app.domains.scan.ocr import MenuExtraction, MenuItem
 
@@ -150,12 +150,12 @@ def test_unknown_restaurant_404(client, user, monkeypatch):
 def test_llm_timeout_falls_back(client, user, monkeypatch):
     calls = []
 
-    async def slow(image, mime, model):
+    async def slow(model, system, contents, schema):
         calls.append(model)
         await asyncio.sleep(10)
 
     monkeypatch.setattr(settings, "llm_timeout_sec", 0.05)
-    monkeypatch.setattr(ocr, "_call", slow)
+    monkeypatch.setattr(llm, "_call", slow)
     r = upload(client)
     assert r.status_code == 504
     assert r.json()["error"]["code"] == "LLM_TIMEOUT"
@@ -165,7 +165,7 @@ def test_llm_timeout_falls_back(client, user, monkeypatch):
 def test_fallback_model_answers(client, user, monkeypatch):
     """기본 모델이 503 이어도 예비 모델이 읽으면 성공이다"""
 
-    async def busy(image, mime, model):
+    async def busy(model, system, contents, schema):
         if model == settings.gemini_model:
             raise errors.ServerError(503, {"error": {"message": "high demand"}})
         return MenuExtraction(
@@ -173,7 +173,7 @@ def test_fallback_model_answers(client, user, monkeypatch):
             image_quality="ok",
         )
 
-    monkeypatch.setattr(ocr, "_call", busy)
+    monkeypatch.setattr(llm, "_call", busy)
     r = upload(client)
     assert r.status_code == 201
     assert r.json()["items"][0]["raw_name"] == "국밥"
@@ -197,19 +197,20 @@ def test_mock_llm_needs_no_key(client, user, monkeypatch):
     [
         (errors.ClientError(400, {"error": {"message": "key"}}), 1),
         (errors.ClientError(429, {"error": {"message": "rate"}}), 2),
+        (errors.ClientError(404, {"error": {"message": "no model"}}), 2),
         (httpx.ConnectError("down"), 2),
     ],
-    ids=["400", "429", "연결 끊김"],
+    ids=["400", "429", "모델 없음", "연결 끊김"],
 )
 def test_llm_errors_retry_only_transient(client, user, monkeypatch, error, tries):
-    """키가 틀린 건 다시 불러도 같고, 요청 제한·연결 끊김은 풀릴 수 있다"""
+    """키가 틀린 건 다시 불러도 같고, 요청 제한, 연결 끊김은 풀릴 수 있다"""
     calls = []
 
-    async def fail(image, mime, model):
+    async def fail(model, system, contents, schema):
         calls.append(1)
         raise error
 
-    monkeypatch.setattr(ocr, "_call", fail)
+    monkeypatch.setattr(llm, "_call", fail)
     r = upload(client)
     assert r.status_code == 502
     assert r.json()["error"]["code"] == "LLM_UNAVAILABLE"

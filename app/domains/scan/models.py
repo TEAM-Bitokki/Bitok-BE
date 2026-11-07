@@ -59,8 +59,9 @@ class Analysis(Base):
     scan_id: Mapped[int] = mapped_column(ForeignKey("scans.id", ondelete="CASCADE"))
     dish_id: Mapped[int] = mapped_column(ForeignKey("dishes.id", ondelete="CASCADE"))
     verdict: Mapped[str] = mapped_column(String(20))
-    # [{ingredient, tag, status, likelihood, source}]
-    # status = allergy | avoid | allowed
+    # 그때 메뉴의 재료 전부. 걸렸는지는 읽을 때 지금 프로필로 다시 본다
+    # [{ingredient_id, ingredient, ingredient_en, tags, likelihood, source, via}]
+    # via 는 이 재료가 나온 dish_ingredients 이름. 두부 -> 대두 면 대두의 via 는 [두부]
     matches: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default="[]")
 
     # 이 분석에서 실제로 직원에게 물어본 성분 태그
