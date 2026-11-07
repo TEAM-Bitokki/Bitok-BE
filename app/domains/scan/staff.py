@@ -99,8 +99,8 @@ async def result(session: AsyncSession, user_id: int, scan_id: int) -> ResultRes
                 name_ko=d.name_ko,
                 name_en=d.name_en,
                 analysis_id=a.id,
-                verdict=judging.judge(a.matches, rules, facts.get(d.id)),
-                matches=judging.flagged(a.matches, rules, facts.get(d.id)),
+                verdict=judging.judge(a.matches, rules, facts.get((scan_id, d.id))),
+                matches=judging.flagged(a.matches, rules, facts.get((scan_id, d.id))),
             )
             for a, d in rows
         ],

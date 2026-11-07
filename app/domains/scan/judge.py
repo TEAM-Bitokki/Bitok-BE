@@ -75,22 +75,26 @@ async def load_rules(session: AsyncSession, user_id: int) -> Rules | None:
     )
 
 
-async def load_facts(session: AsyncSession, scan_id: int) -> dict[int, Facts]:
-    """메뉴 -> 이 스캔에서 직원이 답한 것"""
+async def load_facts(
+    session: AsyncSession, *scan_ids: int
+) -> dict[tuple[int, int], Facts]:
+    """(스캔, 메뉴) -> 그 스캔에서 직원이 답한 것"""
     rows = await session.execute(
         select(
+            StaffQuestion.scan_id,
             StaffQuestion.dish_id,
             StaffQuestion.target,
             Ingredient.name_ko,
             StaffQuestion.answer,
         )
         .join(Ingredient, Ingredient.id == StaffQuestion.ingredient_id)
-        .where(StaffQuestion.scan_id == scan_id, StaffQuestion.answer.is_not(None))
+        .where(StaffQuestion.scan_id.in_(scan_ids), StaffQuestion.answer.is_not(None))
     )
     facts = defaultdict(dict)
-    for dish_id, target, name, answer in rows:
-        old = facts[dish_id].get((target, name), answer)
-        facts[dish_id][(target, name)] = min(old, answer, key=CAUTION.index)
+    for scan_id, dish_id, target, name, answer in rows:
+        menu = facts[scan_id, dish_id]
+        old = menu.get((target, name), answer)
+        menu[(target, name)] = min(old, answer, key=CAUTION.index)
     return facts
 
 
