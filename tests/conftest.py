@@ -12,8 +12,10 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.core.db import Base, get_session
+from app.domains.scan.models import Scan
 from app.main import app
 from app.models import Base as _  # noqa: F401  모든 모델을 metadata 에 올린다
+from scripts.seed_dictionary import build, seed
 
 
 def _test_url() -> str:
@@ -116,3 +118,26 @@ async def session():
 def other_session():
     """다른 이벤트 루프(앱 안)에서 따로 여는 세션"""
     return TestSessionMaker
+
+
+@pytest_asyncio.fixture
+async def scan(client, session, monkeypatch):
+    """가입한 사용자의 빈 스캔. 김치찌개가 시드에 있다 (돼지고기, 두부가 보통 들어감)"""
+    monkeypatch.setattr(settings, "mock_llm", False)
+    kimchi = {
+        "food_type": "한식",
+        "ko": "김치찌개",
+        "en.ROMAN": "kimchijjigae",
+        "ingredients.ko": ["돼지고기", "두부"],
+        "ingredients.en": ["Pork", "Tofu"],
+        "allergy": [],
+    }
+    await seed(session, build([kimchi] * 2))
+    r = client.post(
+        "/api/auth/sign-up",
+        json={"device_token": "550e8400-e29b-41d4-a716-446655440000"},
+    )
+    s = Scan(user_id=r.json()["user_id"], image_url="x.jpg")
+    session.add(s)
+    await session.commit()
+    return s.id

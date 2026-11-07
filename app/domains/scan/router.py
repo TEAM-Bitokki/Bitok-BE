@@ -1,11 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi import APIRouter, File, Form, Path, UploadFile, status
 
 from app.core.db import SessionDep
 from app.core.deps import CurrentUser
 from app.core.errors import UNAUTHORIZED, ErrorCode, responses
-from app.domains.scan import analysis, service
+from app.domains.scan import analysis, service, staff
 from app.domains.scan.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -15,6 +15,8 @@ from app.domains.scan.schemas import (
 )
 
 router = APIRouter(prefix="/api/scans", tags=["스캔/분석"])
+
+ScanId = Annotated[int, Path(ge=1, le=2**63 - 1)]  # BIGINT
 
 
 @router.post(
@@ -93,7 +95,7 @@ async def create_scan(
     ),
 )
 async def analyze(
-    scan_id: int,
+    scan_id: ScanId,
     body: AnalyzeRequest,
     user_id: CurrentUser,
     session: SessionDep,
@@ -106,18 +108,19 @@ async def analyze(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="직원 응답 기록",
     description=(
-        "질문 하나에 답할 때마다 호출한다.\n\n"
-        "식당을 선택한 스캔이면 이 기록이 그대로 **다른 사용자에게도 보이는 데이터**가 된다. "
+        "질문 하나에 답할 때마다 호출한다. 같은 질문에 다시 답하면 마지막 답으로 바꾼다.\n\n"
+        "식당을 선택한 스캔이면 이 기록이 다른 사용자에게도 보이는 데이터가 된다. "
         "같은 식당 같은 메뉴에 대한 다른 사용자의 응답과 함께 집계된다."
     ),
     responses=responses(UNAUTHORIZED, (404, "없는 질문")),
 )
 async def answer(
-    scan_id: int,
+    scan_id: ScanId,
     body: AnswerRequest,
     user_id: CurrentUser,
+    session: SessionDep,
 ) -> None:
-    raise NotImplementedError
+    await staff.answer(session, user_id, scan_id, body)
 
 
 @router.get(
@@ -126,9 +129,17 @@ async def answer(
     summary="최종 결과 조회",
     description=(
         "모든 질문이 끝난 뒤 호출한다. 직원 응답을 반영한 최종 판정을 돌려준다.\n\n"
-        "확인하지 않은 차단 성분이 남아 있으면 `safe` 를 주지 않는다."
+        "확인하지 않은 차단 성분이 남아 있으면 `safe`를 주지 않는다. "
+        "모르겠어요나 답하지 않은 질문은 `not_sure`\n\n"
+        "`menus[].matches[].verdict`가 재료별 결과이시다"
     ),
-    responses=responses(UNAUTHORIZED, (404, "없는 스캔")),
+    responses=responses(
+        UNAUTHORIZED,
+        (404, "없는 스캔 또는 아직 분석 전"),
+        (422, "식이 프로필 미등록", ErrorCode.PROFILE_REQUIRED),
+    ),
 )
-async def result(scan_id: int, user_id: CurrentUser) -> ResultResponse:
-    raise NotImplementedError
+async def result(
+    scan_id: ScanId, user_id: CurrentUser, session: SessionDep
+) -> ResultResponse:
+    return await staff.result(session, user_id, scan_id)

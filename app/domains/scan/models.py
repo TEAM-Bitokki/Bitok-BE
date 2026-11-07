@@ -92,8 +92,24 @@ class StaffQuestion(Base):
     seq: Mapped[int] = mapped_column(Integer)
     question_ko: Mapped[str] = mapped_column(Text)
     question_en: Mapped[str] = mapped_column(Text)
+    # 어느 재료에 대해 물었나. 육수에 생선이면 육수, 메뉴 전체에 물었으면 NULL
+    target: Mapped[str | None] = mapped_column(String(80), default=None)
+    answer: Mapped[str | None] = mapped_column(String(10), default=None)
+    answered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    # 식당을 고른 스캔이면 공개 기록도 남긴다. 다시 답하면 그 기록을 고친다
+    staff_check_id: Mapped[int | None] = mapped_column(
+        ForeignKey("staff_checks.id", ondelete="SET NULL"), default=None
+    )
 
-    __table_args__ = (UniqueConstraint("scan_id", "seq", name="uq_scan_question"),)
+    __table_args__ = (
+        UniqueConstraint("scan_id", "seq", name="uq_scan_question"),
+        CheckConstraint(
+            "answer IS NULL OR answer IN ('yes','no','unsure')",
+            name="ck_question_answer",
+        ),
+    )
 
 
 class StaffCheck(Base):
@@ -109,6 +125,8 @@ class StaffCheck(Base):
     ingredient_id: Mapped[int] = mapped_column(
         ForeignKey("ingredients.id", ondelete="CASCADE")
     )
+    # 어느 재료에 대해 물었나. StaffQuestion.target 과 같다
+    target: Mapped[str | None] = mapped_column(String(80), default=None)
     # 탈퇴 시 익명화만
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), default=None

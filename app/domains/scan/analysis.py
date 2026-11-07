@@ -26,7 +26,7 @@ from app.core.errors import BitokError, ErrorCode
 from app.domains.profile.models import DietaryProfile
 from app.domains.scan import judge as judging
 from app.domains.scan.dish import DishInfo, describe_dishes
-from app.domains.scan.judge import Rules, load_rules, status
+from app.domains.scan.judge import ASK_FOR_TAG, Rules, load_rules, status
 from app.domains.scan.models import Analysis, Scan, StaffQuestion
 from app.domains.scan.schemas import (
     AnalyzedMenu,
@@ -37,17 +37,6 @@ from app.domains.scan.schemas import StaffQuestion as QuestionOut
 
 NAME_MAX = Ingredient.__table__.c.name_ko.type.length
 ROMAN_MAX = Dish.__table__.c.name_en.type.length
-
-# 식단을 물을 때 쓰는 말
-ASK_FOR_TAG = {
-    "meat": ("고기", "Meat"),
-    "fish": ("해산물", "Seafood"),
-    "shellfish": ("해산물", "Seafood"),
-    "crustacean": ("해산물", "Seafood"),
-    "dairy": ("유제품", "Dairy"),
-    "egg": ("계란", "Egg"),
-    "honey": ("꿀", "Honey"),
-}
 
 
 async def analyze(
@@ -124,8 +113,9 @@ async def analyze(
             seq=n,
             question_ko=ko,
             question_en=en,
+            target=target,
         )
-        for n, (d, i, _, ko, en) in enumerate(asks, 1)
+        for n, (d, i, _, ko, en, target) in enumerate(asks, 1)
     ]
     session.add_all(analyses + questions)
     await session.commit()
@@ -481,8 +471,8 @@ async def _questions(
     matches: dict[int, list[dict]],
     possible: dict[int, list[str]],
     rules: Rules,
-) -> list[tuple[int, int, str, str, str]]:
-    """(dish_id, ingredient_id, 물은 재료, 질문, 영어 질문). 알레르기를 먼저 묻는다"""
+) -> list[tuple[int, int, str, str, str, str | None]]:
+    """(dish_id, ingredient_id, 물은 재료, 질문, 영어 질문, target). 알레르기를 먼저 묻는다"""
     allergens = await _allergens(session, rules)
     words = await _diet_words(session, rules)
     seen = {a.id for a in allergens}
@@ -497,7 +487,10 @@ async def _questions(
             continue
         dish = dishes[d]
         if not matches[d]:
-            asks += [(p, n, _ask(dish, w.id, w.name_ko, w.name_en)) for p, w in blind]
+            asks += [
+                (p, n, _ask(dish, w.id, w.name_ko, w.name_en, target=None))
+                for p, w in blind
+            ]
             continue
         by_name = {m["ingredient"]: m for m in matches[d]}
         for name in possible[d]:
@@ -530,16 +523,22 @@ async def _questions(
                     (p, n, _ask(dish, m["ingredient_id"], name, m["ingredient_en"]))
                 )
     asks.sort(key=lambda a: a[:2])
-    return [a[2] for a in asks[: settings.max_staff_questions]]
+    unique = {}  # 계란 알레르기인 비건에게 "육수에 계란" 은 한 번만
+    for _, _, ask in asks:
+        d, i, *_, target = ask
+        unique.setdefault((d, i, target), ask)
+    return list(unique.values())[: settings.max_staff_questions]
 
 
-def _ask(dish: Dish, ingredient_id: int, ko: str, en: str) -> tuple:
+def _ask(dish: Dish, ingredient_id: int, ko: str, en: str, target="same") -> tuple:
+    """target 은 어느 재료에 대해 물었나. 메뉴 전체에 물었으면 None"""
     return (
         dish.id,
         ingredient_id,
         ko,
         f"이 {dish.name_ko}에 {ko}{_subject(ko)} 들어가나요?",
         f"Does this {dish.name_en} contain {en.lower()}?",
+        ko if target == "same" else target,
     )
 
 
@@ -553,6 +552,7 @@ def _ask_inside(dish: Dish, generic: dict, inside) -> tuple:
         a,
         f"이 {dish.name_ko}의 {g}에 {a}{_subject(a)} 들어가나요?",
         f"Does the {g_en} in this {dish.name_en} contain {a_en}?",
+        g,
     )
 
 

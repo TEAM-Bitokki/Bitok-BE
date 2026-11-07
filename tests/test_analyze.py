@@ -1,7 +1,6 @@
 """메뉴 분석, 직원 질문"""
 
 import pytest
-import pytest_asyncio
 from google.genai import errors
 from sqlalchemy import func, select
 
@@ -19,9 +18,7 @@ from app.domains.profile.models import DietaryProfile, ProfileAllergen
 from app.domains.scan import dish
 from app.domains.scan.dish import DishInfo, DishInfos, IngredientName
 from app.domains.scan.judge import Rules, judge
-from app.domains.scan.models import Analysis, Scan, StaffQuestion
-from scripts.seed_dictionary import build, seed
-from tests.test_seed import menu
+from app.domains.scan.models import Analysis, StaffQuestion
 
 V4 = "550e8400-e29b-41d4-a716-446655440000"
 H = {"deviceToken": V4}
@@ -54,21 +51,6 @@ def llm_knows(monkeypatch, *infos):
 
     monkeypatch.setattr(dish, "_describe", fake)
     return calls
-
-
-@pytest_asyncio.fixture
-async def scan(client, session, monkeypatch):
-    """김치찌개가 시드에 있다. 돼지고기, 두부가 보통 들어간다"""
-    monkeypatch.setattr(settings, "mock_llm", False)
-    rows = [menu("김치찌개", ["돼지고기", "두부"], roman="kimchijjigae")] * 2
-    await seed(session, build(rows))
-    user_id = client.post("/api/auth/sign-up", json={"device_token": V4}).json()[
-        "user_id"
-    ]
-    s = Scan(user_id=user_id, image_url="x.jpg")
-    session.add(s)
-    await session.commit()
-    return s.id
 
 
 async def profile(client, session, allergens=(), diet="none"):
