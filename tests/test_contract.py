@@ -3,7 +3,6 @@
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app.main import app
 
@@ -23,11 +22,6 @@ PATH_PARAMS = {
     "{ingredient_id}": "1",
     "{question_id}": "1",
 }
-
-
-@pytest.fixture(scope="module")
-def client() -> TestClient:
-    return TestClient(app, raise_server_exceptions=False)
 
 
 def err(response) -> dict:
