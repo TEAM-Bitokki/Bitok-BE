@@ -6,12 +6,14 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.common.dictionary import GENERIC, tags_for, with_sources
 from app.common.models import (
     Dish,
     DishAlias,
     DishIngredient,
+    DishIngredientSource,
     Ingredient,
     IngredientAlias,
     canonical_name,
@@ -225,16 +227,17 @@ async def _save_dishes(
             )
             .values(name_en=_roman(infos[n], n))
         )
-    told = [
+    said = [
         (dish_ids[k], _ingredients(infos[n]))
         for k, n in menus.items()
         if n in infos and not infos[n].unknown
     ]
-    english = {name: en for _, i in told for name, (_, en) in i.items()}
+    english = {name: en for _, i in said for name, (_, en, _) in i.items()}
     resolved = await _resolve(session, english)
+    await _save_sources(session, said, resolved)
     merged = {}  # 별칭이 같은 재료(달걀, 계란)나 같은 메뉴의 두 이름은 합친다
-    for dish_id, i in told:
-        for name, (likelihood, _) in i.items():
+    for dish_id, i in said:
+        for name, (likelihood, _, _) in i.items():
             if name in resolved:
                 key = (dish_id, resolved[name])
                 if merged.get(key) != Likelihood.TYPICAL:
@@ -244,10 +247,16 @@ async def _save_dishes(
         for (d, i), lk in merged.items()
     ]
     if rows:
+        stmt = insert(DishIngredient).values(rows)
+        # 먼저 possible 로 들어간 모델 답은 typical 로 올린다. 시드, 검수 데이터는 그대로
         await session.execute(
-            insert(DishIngredient)
-            .values(rows)
-            .on_conflict_do_nothing(constraint="uq_dish_ingredient")
+            stmt.on_conflict_do_update(
+                constraint="uq_dish_ingredient",
+                set_={"likelihood": stmt.excluded.likelihood},
+                where=(DishIngredient.source == "llm")
+                & (DishIngredient.likelihood == Likelihood.POSSIBLE)
+                & (stmt.excluded.likelihood == Likelihood.TYPICAL),
+            )
         )
     return dish_ids
 
@@ -256,8 +265,8 @@ def _roman(info: DishInfo | None, name: str) -> str:
     return ((info.name_en.strip() if info else "") or name)[:ROMAN_MAX]
 
 
-def _ingredients(info: DishInfo) -> dict[str, tuple[Likelihood, str]]:
-    """이름 -> (likelihood, 영어). 육수처럼 뭘로 만들었는지 모르는 건 possible"""
+def _ingredients(info: DishInfo) -> dict[str, tuple[Likelihood, str, list[str]]]:
+    """이름 -> (likelihood, 영어, 원재료). 육수처럼 뭘로 만들었는지 모르는 건 possible"""
     result = {}
     for likelihood, items in (
         (Likelihood.POSSIBLE, info.possible),
@@ -265,11 +274,37 @@ def _ingredients(info: DishInfo) -> dict[str, tuple[Likelihood, str]]:
     ):
         for item in items:
             name = canonical_name(item.name_ko)
+            before = result.get(name, (None, None, []))[2]
+            contains = [canonical_name(c) for c in item.contains]
             result[name] = (
                 Likelihood.POSSIBLE if name in GENERIC else likelihood,
                 item.name_en.strip()[:NAME_MAX] or name,
+                list(dict.fromkeys(before + contains)),
             )
     return result
+
+
+async def _known(session: AsyncSession, names: list[str]) -> dict[str, int]:
+    """이름이나 별칭으로 이미 있는 재료"""
+    alias = dict(
+        (
+            await session.execute(
+                select(IngredientAlias.alias, IngredientAlias.ingredient_id).where(
+                    IngredientAlias.alias.in_(names)
+                )
+            )
+        ).all()
+    )
+    ids = dict(
+        (
+            await session.execute(
+                select(Ingredient.name_ko, Ingredient.id).where(
+                    Ingredient.name_ko.in_(names)
+                )
+            )
+        ).all()
+    )
+    return ids | alias
 
 
 async def _resolve(session: AsyncSession, english: dict[str, str]) -> dict[str, int]:
@@ -313,6 +348,67 @@ async def _resolve(session: AsyncSession, english: dict[str, str]) -> dict[str, 
     return alias | ids
 
 
+async def _save_sources(
+    session: AsyncSession,
+    said: list[tuple[int, dict[str, tuple[Likelihood, str, list[str]]]]],
+    resolved: dict[str, int],
+) -> None:
+    """모델이 알려준 원재료는 그 메뉴에만 붙인다. 롤반죽에 계란이 드는지는 메뉴마다 다르다"""
+    words = {c for _, i in said for (_, _, contains) in i.values() for c in contains}
+    known = await _known(session, list(words))
+    missing = sorted(words - set(known))
+    if missing:
+        await session.execute(
+            insert(Ingredient)
+            .values(
+                [
+                    {
+                        "name_ko": c,
+                        "name_en": c,
+                        "allergen_tags": sorted(tags_for(c)),
+                        "searchable": False,
+                    }
+                    for c in missing
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=["name_ko"])
+        )
+        known |= await _known(session, missing)
+    rows = {
+        (dish_id, resolved[name], known[c])
+        for dish_id, i in said
+        for name, (_, _, contains) in i.items()
+        if name in resolved
+        for c in contains
+        if c in known and known[c] != resolved[name]
+    }
+    if rows:
+        await session.execute(
+            insert(DishIngredientSource)
+            .values(
+                [{"dish_id": d, "ingredient_id": i, "source_id": c} for d, i, c in rows]
+            )
+            .on_conflict_do_nothing()
+        )
+
+
+async def _told(
+    session: AsyncSession, dish_ids: list[int]
+) -> dict[int, dict[str, set[str]]]:
+    """메뉴 -> 재료 이름 -> 모델이 알려준 원재료 이름"""
+    source = aliased(Ingredient)
+    rows = await session.execute(
+        select(DishIngredientSource.dish_id, Ingredient.name_ko, source.name_ko)
+        .join(Ingredient, Ingredient.id == DishIngredientSource.ingredient_id)
+        .join(source, source.id == DishIngredientSource.source_id)
+        .where(DishIngredientSource.dish_id.in_(dish_ids))
+    )
+    told = defaultdict(dict)
+    for dish_id, name, base in rows:
+        told[dish_id].setdefault(name, set()).add(base)
+    return told
+
+
 async def _matches(
     session: AsyncSession, dish_ids: list[int]
 ) -> tuple[dict[int, list[dict]], dict[int, list[str]]]:
@@ -333,7 +429,10 @@ async def _matches(
             .order_by(Ingredient.name_ko)
         )
     ).all()
-    names = list(set().union(*(with_sources({r.name_ko}) for r in rows)))
+    told = await _told(session, dish_ids)
+    names = list(
+        set().union(*(with_sources({r.name_ko}, told[r.dish_id]) for r in rows))
+    )
     info = {
         r.name_ko: r
         for r in await session.execute(
@@ -351,7 +450,7 @@ async def _matches(
     for r in rows:
         if r.likelihood == Likelihood.POSSIBLE:
             possible[r.dish_id].append(r.name_ko)
-        for name in sorted(with_sources({r.name_ko})):
+        for name in sorted(with_sources({r.name_ko}, told[r.dish_id])):
             if name not in info:
                 continue
             m = matches[r.dish_id].setdefault(
@@ -406,12 +505,14 @@ async def _questions(
             if m is None:
                 continue
             if name in GENERIC:
+                inside = [c for c in matches[d] if name in c["via"]]
+                ids = {c["ingredient_id"] for c in inside}
                 asks += [
                     (0, n, _ask_inside(dish, m, a))
                     for a in allergens
-                    if set(a.allergen_tags) & set(m["tags"])
+                    if set(a.allergen_tags) & set(m["tags"]) or a.id in ids
                 ]
-                tags = rules.blocked_tags & set(m["tags"])
+                tags = rules.blocked_tags & {t for c in inside for t in c["tags"]}
                 for w in sorted(
                     {words[t] for t in tags & set(words)}, key=lambda w: w.name_ko
                 ):
@@ -421,7 +522,7 @@ async def _questions(
                         ask = _ask_inside(dish, m, w)
                     asks.append((1, n, ask))
                 continue
-            covers = [by_name[s] for s in with_sources({name}) if s in by_name]
+            covers = [c for c in matches[d] if name in c["via"]]
             found = {status(c, rules) for c in covers} - {MatchStatus.ALLOWED}
             if found:
                 p = 0 if MatchStatus.ALLERGY in found else 1

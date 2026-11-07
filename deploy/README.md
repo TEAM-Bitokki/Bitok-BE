@@ -80,6 +80,7 @@ sudo systemctl enable --now bitok
 cd ~/Bitok-BE && git pull
 .venv/bin/pip install -r requirements.txt
 .venv/bin/alembic upgrade head
+.venv/bin/python -m scripts.retag_ingredients
 sudo systemctl restart bitok
 ```
 
