@@ -98,10 +98,12 @@ app.dependency_overrides[get_session] = _override_session
 def client():
     """앱도 테스트 하나 동안 같은 이벤트 루프와 연결을 쓴다"""
     pooled, _current["app"] = _pooled()
-    with TestClient(app, raise_server_exceptions=False) as c:
-        yield c
-        c.portal.call(pooled.dispose)
-    _current["app"] = TestSessionMaker
+    try:
+        with TestClient(app, raise_server_exceptions=False) as c:
+            yield c
+            c.portal.call(pooled.dispose)
+    finally:
+        _current["app"] = TestSessionMaker
 
 
 @pytest_asyncio.fixture

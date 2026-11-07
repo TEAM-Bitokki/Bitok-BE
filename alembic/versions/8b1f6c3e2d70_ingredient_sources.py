@@ -31,6 +31,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["source_id"], ["ingredients.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("dish_id", "ingredient_id", "source_id"),
     )
+    op.execute("UPDATE dishes SET described_at = NULL")
 
 
 def downgrade() -> None:

@@ -1,5 +1,7 @@
 """프론트 연동을 위한 응답 형식 체크"""
 
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,7 +9,7 @@ from app.main import app
 
 V4 = "550e8400-e29b-41d4-a716-446655440000"
 V1 = "2c1b7c0e-b7a4-11ef-9cd2-0242ac120002"
-UNREGISTERED = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+UNREGISTERED = str(uuid.uuid4())  # 다른 테스트가 가입시킨 토큰과 겹치지 않게
 
 pytestmark = (
     pytest.mark.nodb

@@ -356,6 +356,24 @@ async def _save_sources(
     """모델이 알려준 원재료는 그 메뉴에만 붙인다. 롤반죽에 계란이 드는지는 메뉴마다 다르다"""
     words = {c for _, i in said for (_, _, contains) in i.values() for c in contains}
     known = await _known(session, list(words))
+    missing = sorted(words - set(known))
+    if missing:
+        await session.execute(
+            insert(Ingredient)
+            .values(
+                [
+                    {
+                        "name_ko": c,
+                        "name_en": c,
+                        "allergen_tags": sorted(tags_for(c)),
+                        "searchable": False,
+                    }
+                    for c in missing
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=["name_ko"])
+        )
+        known |= await _known(session, missing)
     rows = {
         (dish_id, resolved[name], known[c])
         for dish_id, i in said
@@ -487,13 +505,14 @@ async def _questions(
             if m is None:
                 continue
             if name in GENERIC:
-                inside = {c["ingredient_id"] for c in matches[d] if name in c["via"]}
+                inside = [c for c in matches[d] if name in c["via"]]
+                ids = {c["ingredient_id"] for c in inside}
                 asks += [
                     (0, n, _ask_inside(dish, m, a))
                     for a in allergens
-                    if set(a.allergen_tags) & set(m["tags"]) or a.id in inside
+                    if set(a.allergen_tags) & set(m["tags"]) or a.id in ids
                 ]
-                tags = rules.blocked_tags & set(m["tags"])
+                tags = rules.blocked_tags & {t for c in inside for t in c["tags"]}
                 for w in sorted(
                     {words[t] for t in tags & set(words)}, key=lambda w: w.name_ko
                 ):

@@ -4,9 +4,15 @@ import json
 import zipfile
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 
-from app.common.models import Dish, DishIngredient, Ingredient, IngredientAlias
+from app.common.models import (
+    Dish,
+    DishIngredient,
+    DishIngredientSource,
+    Ingredient,
+    IngredientAlias,
+)
 from scripts.retag_ingredients import retag
 from scripts.seed_dictionary import build, read_rows, seed, tags_for
 
@@ -240,3 +246,70 @@ async def test_retag_alone_fixes_old_tags(session):
         ).all()
     )
     assert rows == {"육수": ["crustacean", "fish", "meat", "shellfish"], "두유": []}
+
+
+@pytest.mark.parametrize(
+    "kept,alias,result",
+    [
+        (("possible", "curated"), ("typical", "llm"), ("possible", "curated")),
+        (("typical", "public_data"), ("typical", "llm"), ("typical", "llm")),
+    ],
+    ids=["검수 데이터가 이긴다", "모델 답은 다음 시드에도 남는다"],
+)
+@pytest.mark.asyncio
+async def test_alias_merge_keeps_trusted_link(session, kept, alias, result):
+    beef = Ingredient(name_ko="소고기", name_en="Beef", searchable=False)
+    dish = Dish(canonical_name="불고기", name_ko="불고기", name_en="Bulgogi")
+    session.add_all([beef, dish])
+    await seed(session, build([]))
+    real = await session.scalar(
+        select(Ingredient.id).where(Ingredient.name_ko == "쇠고기")
+    )
+    soy = await session.scalar(
+        select(Ingredient.id).where(Ingredient.name_ko == "대두")
+    )
+    await session.execute(delete(DishIngredient))
+    session.add_all(
+        [
+            DishIngredient(
+                dish_id=dish.id, ingredient_id=real, likelihood=kept[0], source=kept[1]
+            ),
+            DishIngredient(
+                dish_id=dish.id,
+                ingredient_id=beef.id,
+                likelihood=alias[0],
+                source=alias[1],
+            ),
+            DishIngredientSource(dish_id=dish.id, ingredient_id=beef.id, source_id=soy),
+        ]
+    )
+    await session.commit()
+
+    await seed(session, build([]))
+
+    row = (
+        await session.execute(
+            select(DishIngredient.likelihood, DishIngredient.source).where(
+                DishIngredient.dish_id == dish.id
+            )
+        )
+    ).all()
+    assert row == [result]
+    sources = await session.execute(
+        select(DishIngredientSource.ingredient_id, DishIngredientSource.source_id)
+    )
+    assert sources.all() == [(real, soy)]
+
+
+@pytest.mark.asyncio
+async def test_partial_seed_keeps_other_menus(session):
+    """다른 지역 라벨만 시드해도 먼저 시드한 메뉴의 재료는 남는다"""
+    await seed(session, build([menu("김치찌개", ["두부"])] * 2))
+    await seed(session, build([menu("냉면", ["메밀"])] * 2))
+
+    rows = await session.execute(
+        select(Dish.name_ko)
+        .join(DishIngredient, DishIngredient.dish_id == Dish.id)
+        .distinct()
+    )
+    assert set(rows.scalars()) == {"김치찌개", "냉면"}

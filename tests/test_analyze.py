@@ -616,3 +616,37 @@ async def test_typical_upgrades_earlier_model_answer(
     r = analyze(client, scan, "새우볶음밥")
 
     assert r.json()["menus"][0]["verdict"] == verdict
+
+
+@pytest.mark.asyncio
+async def test_unlisted_source_is_kept(client, session, scan, monkeypatch):
+    """목록에 없는 원재료(닭가슴살)도 버리지 않는다. 이름 규칙이 닭고기를 찾는다"""
+    await profile(client, session, diet="vegetarian")
+    llm_knows(
+        monkeypatch,
+        info(
+            "스트립랩",
+            "Seuteuripraep",
+            typical=[("크리스피스트립", "Crispy Strip", ["닭가슴살"])],
+        ),
+    )
+
+    r = analyze(client, scan, "스트립랩")
+
+    assert r.json()["menus"][0]["verdict"] == "avoid"
+
+
+@pytest.mark.asyncio
+async def test_broth_asks_about_its_sources_too(client, session, scan, monkeypatch):
+    """비건인데 육수에 우유가 든다고 하면 유제품도 묻는다"""
+    await profile(client, session, diet="vegan")
+    llm_knows(
+        monkeypatch,
+        info("크림우동", "Keurimudong", possible=[("육수", "Broth", ["우유"])]),
+    )
+
+    r = analyze(client, scan, "크림우동")
+
+    assert "이 크림우동의 육수에 유제품이 들어가나요?" in [
+        q["question_ko"] for q in r.json()["questions"]
+    ]

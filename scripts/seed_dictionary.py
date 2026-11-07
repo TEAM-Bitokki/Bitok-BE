@@ -21,6 +21,7 @@ from app.common.dictionary import (
 from app.common.models import (
     Dish,
     DishIngredient,
+    DishIngredientSource,
     Ingredient,
     IngredientAlias,
     dish_key,
@@ -135,17 +136,46 @@ async def _merge_alias_rows(
         old = ids.get(alias)
         if old is None or old == ids[ko]:
             continue
+        # 검수 > 모델 > 시드 순으로 남긴다. 검수가 아니면 위험한 쪽(typical)을 남긴다
         await session.execute(
             text("""
                 INSERT INTO dish_ingredients (dish_id, ingredient_id, likelihood, source)
                 SELECT dish_id, :new, likelihood, source
                 FROM dish_ingredients WHERE ingredient_id = :old
-                ON CONFLICT ON CONSTRAINT uq_dish_ingredient DO UPDATE
-                SET likelihood = CASE
-                    WHEN excluded.likelihood = 'typical' THEN 'typical'
-                    ELSE dish_ingredients.likelihood END
+                ON CONFLICT ON CONSTRAINT uq_dish_ingredient DO UPDATE SET
+                likelihood = CASE
+                    WHEN dish_ingredients.source = 'curated'
+                        THEN dish_ingredients.likelihood
+                    WHEN excluded.source = 'curated' THEN excluded.likelihood
+                    WHEN 'typical' IN (dish_ingredients.likelihood, excluded.likelihood)
+                        THEN 'typical'
+                    ELSE 'possible' END,
+                source = CASE
+                    WHEN 'curated' IN (dish_ingredients.source, excluded.source)
+                        THEN 'curated'
+                    WHEN 'llm' IN (dish_ingredients.source, excluded.source) THEN 'llm'
+                    ELSE 'public_data' END
                 """),
             {"new": ids[ko], "old": old},
+        )
+        for column in ("ingredient_id", "source_id"):
+            await session.execute(
+                text(f"""
+                    INSERT INTO dish_ingredient_sources (dish_id, ingredient_id, source_id)
+                    SELECT dish_id,
+                        CASE WHEN ingredient_id = :old THEN :new ELSE ingredient_id END,
+                        CASE WHEN source_id = :old THEN :new ELSE source_id END
+                    FROM dish_ingredient_sources
+                    WHERE {column} = :old AND ingredient_id <> source_id
+                    ON CONFLICT DO NOTHING
+                    """),
+                {"new": ids[ko], "old": old},
+            )
+        await session.execute(
+            delete(DishIngredientSource).where(
+                (DishIngredientSource.ingredient_id == old)
+                | (DishIngredientSource.source_id == old)
+            )
         )
         await session.execute(
             delete(DishIngredient).where(DishIngredient.ingredient_id == old)
@@ -204,10 +234,15 @@ async def seed(session: AsyncSession, plan: Plan) -> dict[str, int]:
             .on_conflict_do_nothing(index_elements=["canonical_name"])
         )
     dish_ids = dict((await session.execute(select(Dish.canonical_name, Dish.id))).all())
-    # public_data 는 시드만 쓴다. 규칙에서 빠진 메뉴의 연결도 같이 지운다
-    await session.execute(
-        delete(DishIngredient).where(DishIngredient.source == "public_data")
-    )
+    # 이번에 넣는 메뉴의 public_data 만 다시 만든다. 다른 지역 라벨로 시드한 메뉴는 그대로
+    planned = [dish_ids[k] for k in plan.dishes]
+    for start in range(0, len(planned), PARAMS_MAX - 1):
+        await session.execute(
+            delete(DishIngredient).where(
+                DishIngredient.source == "public_data",
+                DishIngredient.dish_id.in_(planned[start : start + PARAMS_MAX - 1]),
+            )
+        )
 
     links = [
         {
