@@ -2,10 +2,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Query
 
+from app.core import kakao
 from app.core.db import SessionDep
 from app.core.deps import CurrentUser
 from app.core.errors import UNAUTHORIZED, ErrorCode, responses
-from app.domains.restaurant import service
+from app.domains.restaurant import places, service
 from app.domains.restaurant.schemas import (
     MenuDetailResponse,
     PersonalizedMenuResponse,
@@ -19,6 +20,9 @@ router = APIRouter(prefix="/api/restaurants", tags=["식당"])
 
 BigId = Annotated[int, Path(ge=1, le=2**63 - 1)]  # BIGINT
 PROFILE = (422, "식이 프로필 미등록", ErrorCode.PROFILE_REQUIRED)
+KAKAO = (502, "카카오 API 실패", ErrorCode.MAP_UNAVAILABLE)
+Lat = Annotated[float, Query(ge=-90, le=90, examples=[37.5633])]
+Lng = Annotated[float, Query(ge=-180, le=180, examples=[126.9855])]
 
 
 @router.post(
@@ -29,14 +33,16 @@ PROFILE = (422, "식이 프로필 미등록", ErrorCode.PROFILE_REQUIRED)
         "kakao_place_id` 로 우리 DB의 식당을 찾고, 없으면 만들어서 "
         "`restaurant_id` 를 돌려준다.\n\n"
         "nearby search 는 `restaurant_id` 가 null 일 수 있다. "
-        "이미 있는 식당이면 바디 값은 무시하고 저장된 행을 돌려준다."
+        "이미 있는 식당이면 바디 값은 무시하고 저장된 행을 돌려준다.\n\n"
+        "처음 만들 때는 카카오에서 다시 찾아 카카오 값으로 저장한다. "
+        "바디는 찾는 데만 쓴다."
     ),
-    responses=responses(UNAUTHORIZED),
+    responses=responses(UNAUTHORIZED, (404, "카카오에 없는 식당"), KAKAO),
 )
 async def resolve(
-    body: ResolveRestaurantRequest, user_id: CurrentUser
+    body: ResolveRestaurantRequest, user_id: CurrentUser, session: SessionDep
 ) -> RestaurantBrief:
-    raise NotImplementedError
+    return await places.resolve(session, user_id, body)
 
 
 @router.get(
@@ -46,23 +52,23 @@ async def resolve(
     description=(
         "카카오 로컬 API 결과에 우리 데이터를 합쳐서 돌려준다. "
         "거리순이다.\n\n"
-        "checked_menu_count>0 이면 지도 핀에 숫자를 띄운다.\n\n"
+        "checked_menu_count>0 이면 지도 핀에 숫자를 띄운다. "
+        "이런 식당은 limit 와 상관없이 반경 안이면 모두 넣는다.\n\n"
         "restaurant_id 는 null 일 수 있다. (카카오에만 있고 우리 DB 에 아직) "
         "Select 를 누르면 `POST /api/restaurants` 로 id 를 받는다. "
         "식별은 항상 kakao_place_id 로 한다."
     ),
-    responses=responses(
-        UNAUTHORIZED, (502, "카카오 API 실패", ErrorCode.MAP_UNAVAILABLE)
-    ),
+    responses=responses(UNAUTHORIZED, KAKAO),
 )
 async def nearby(
     user_id: CurrentUser,
-    lat: Annotated[float, Query(examples=[37.5633])],
-    lng: Annotated[float, Query(examples=[126.9855])],
+    session: SessionDep,
+    lat: Lat,
+    lng: Lng,
     radius_m: Annotated[int, Query(ge=100, le=5000)] = 1000,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> RestaurantListResponse:
-    raise NotImplementedError
+    return await places.nearby(session, user_id, lat, lng, radius_m, limit)
 
 
 @router.get(
@@ -70,18 +76,20 @@ async def nearby(
     response_model=RestaurantListResponse,
     summary="식당 이름 검색",
     description="검색창에 입력했을 때. 현재 위치를 주면 거리순으로 정렬한다.",
-    responses=responses(
-        UNAUTHORIZED, (502, "카카오 API 실패", ErrorCode.MAP_UNAVAILABLE)
-    ),
+    responses=responses(UNAUTHORIZED, KAKAO),
 )
 async def search(
     user_id: CurrentUser,
-    q: Annotated[str, Query(min_length=1, examples=["맛있는식당"])],
-    lat: Annotated[float | None, Query()] = None,
-    lng: Annotated[float | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    session: SessionDep,
+    q: Annotated[
+        str,
+        Query(min_length=1, max_length=100, pattern=r"\S", examples=["맛있는식당"]),
+    ],
+    lat: Lat | None = None,
+    lng: Lng | None = None,
+    limit: Annotated[int, Query(ge=1, le=kakao.MAX)] = 20,
 ) -> RestaurantListResponse:
-    raise NotImplementedError
+    return await places.search(session, user_id, q.strip(), lat, lng, limit)
 
 
 @router.get(
@@ -107,8 +115,8 @@ async def detail(
     session: SessionDep,
     cursor: Annotated[str | None, Query(description="이전 응답의 next_cursor")] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
-    lat: Annotated[float | None, Query(ge=-90, le=90)] = None,
-    lng: Annotated[float | None, Query(ge=-180, le=180)] = None,
+    lat: Lat | None = None,
+    lng: Lng | None = None,
 ) -> RestaurantDetailResponse:
     return await service.detail(
         session, user_id, restaurant_id, cursor, limit, lat, lng
