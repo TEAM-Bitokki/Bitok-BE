@@ -55,11 +55,12 @@ def menu_detail(
     last_checked_at: datetime | None,
     common: list[dict] | None = None,
 ) -> MenuDetailResponse:
-    """common 은 Common Ingredients 에 쓸 재료. 없으면 matches"""
+    """common 은 분석에 나온 재료. matches 는 거기에 직원 답을 더한 것"""
+    common = matches if common is None else common
     return MenuDetailResponse(
         dish=DishBrief(dish_id=dish.id, name_ko=dish.name_ko, name_en=dish.name_en),
-        verdict=judge(matches, rules, facts),
+        verdict=judge(matches, rules, facts, unknown=not common),
         matches=flagged(matches, rules, facts),
-        common_ingredients=common_ingredients(matches if common is None else common),
+        common_ingredients=common_ingredients(common),
         last_checked_at=last_checked_at.isoformat() if last_checked_at else None,
     )

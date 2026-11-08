@@ -177,6 +177,46 @@ async def test_staff_answer_counts_without_latest_match(
     ]
 
 
+async def public_answer(session, r, dish_id, name, value, target=None):
+    """다른 사용자가 남긴 직원 답"""
+    i = await session.scalar(select(Ingredient.id).where(Ingredient.name_ko == name))
+    session.add(
+        StaffCheck(
+            restaurant_id=r.id,
+            dish_id=dish_id,
+            ingredient_id=i,
+            target=target,
+            answer=value,
+        )
+    )
+    await session.commit()
+
+
+@pytest.mark.parametrize(
+    "dish,name,verdict",
+    [
+        (KIMCHI, "새우", "safe"),  # 메뉴 전체에 새우가 없다고 들었다
+        (NAENGMYEON, "우유", "not_sure"),  # 우유 답만으로 새우를 알 수 없다
+    ],
+)
+@pytest.mark.asyncio
+async def test_whole_menu_answers(
+    client, session, scan, monkeypatch, dish, name, verdict
+):
+    await profile(client, session, ["새우"])
+    llm_knows(monkeypatch, dish)
+    r = await place(session, scan)
+    menu = analyze(client, scan, dish.name).json()["menus"][0]
+    await public_answer(
+        session, r, menu["dish_id"], name, "no" if name == "새우" else "unsure"
+    )
+
+    [item] = client.get(url(r, "/menus/for-you"), headers=H).json()["items"]
+    detail = client.get(url(r, f"/menus/{menu['dish_id']}"), headers=H).json()
+
+    assert (item["verdict"], detail["verdict"]) == (verdict, verdict)
+
+
 @pytest.mark.asyncio
 async def test_menu_detail_common_ingredients(client, session, scan, monkeypatch):
     await profile(client, session)

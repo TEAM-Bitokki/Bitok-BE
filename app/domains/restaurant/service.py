@@ -284,7 +284,9 @@ async def for_you(
                 name_ko=d.name_ko,
                 name_en=d.name_en,
                 analysis_id=a.id,
-                verdict=judge(matches[d.id], rules, facts.get(d.id)),
+                verdict=judge(
+                    matches[d.id], rules, facts.get(d.id), unknown=not a.matches
+                ),
             )
             for a, d in rows
         ]

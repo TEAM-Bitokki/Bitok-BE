@@ -153,28 +153,36 @@ def match_verdict(match: dict, rules: Rules, facts: Facts) -> Verdict:
         else:
             v = _answered(facts, [(row, row)]) or _answered(facts, keys)
         verdicts.append(v)
-    if Verdict.AVOID in verdicts:
+    names = {match["ingredient"]} | _reasons(match, rules)
+    whole = _answered(facts, [(None, n) for n in sorted(names)])
+    if Verdict.AVOID in verdicts or whole == Verdict.AVOID:
         return Verdict.AVOID
     if verdicts and all(v == Verdict.SAFE for v in verdicts):
         return Verdict.SAFE
-    return Verdict.NOT_SURE
+    return whole or Verdict.NOT_SURE
 
 
-def judge(matches: list[dict], rules: Rules, facts: Facts | None = None) -> Verdict:
-    """facts 가 없으면 직원 확인 전 판정. 재료를 하나도 모르면 not_sure"""
+def judge(
+    matches: list[dict],
+    rules: Rules,
+    facts: Facts | None = None,
+    unknown: bool | None = None,
+) -> Verdict:
+    """facts 가 없으면 직원 확인 전 판정. unknown 은 재료를 하나도 모르는 메뉴"""
     if not (rules.allergen_ids or rules.blocked_tags):
         return Verdict.SAFE
     facts = facts or {}
-    if not matches:  # 고른 알레르기와 식단을 그대로 물었다
-        names = {name for name, _ in rules.allergens} | _words(rules.blocked_tags)
-        return _answered(facts, [(None, n) for n in sorted(names)]) or (
-            Verdict.NOT_SURE
-        )
     verdicts = {
         match_verdict(m, rules, facts)
         for m in matches
         if status(m, rules) != MatchStatus.ALLOWED
     }
+    blind = not matches if unknown is None else unknown
+    if blind:  # 고른 알레르기와 식단을 그대로 물었다
+        names = {name for name, _ in rules.allergens} | _words(rules.blocked_tags)
+        verdicts.add(
+            _answered(facts, [(None, n) for n in sorted(names)]) or Verdict.NOT_SURE
+        )
     for v in (Verdict.AVOID, Verdict.NOT_SURE):
         if v in verdicts:
             return v
