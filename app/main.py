@@ -39,8 +39,39 @@ SWAGGER_UI_PARAMETERS = {
     "displayRequestDuration": True,
 }
 
+DESCRIPTION = """
+## 앞끼들에게
+
+1. 처음 켤 때 UUID v4를 만들기 (PowerShell에서 [guid]::NewGuid()로 쉽게 생성가능)
+
+2. `POST /api/auth/sign-up`로 회원가입
+3. 그다음부터 모든 요청 헤더에 `deviceToken: <UUID>`
+
+
+## API 흐름 순서
+
+1. 식당: `GET /api/restaurants/search` 또는 `/nearby`, Select 하면 `POST /api/restaurants` 로 `restaurant_id`
+2. 촬영: `POST /api/scans` (10~25초 걸림)
+3. 분석: `POST /api/scans/{scan_id}/analyze`
+4. 직원 질문: 질문마다 `POST /api/scans/{scan_id}/answers`
+5. 결과: `GET /api/scans/{scan_id}/result`
+6. 저장: `POST /api/my-checks`
+
+## 뷰 디테일들
+
+- Staff Check Results, Saved Menus: `GET /api/analyses/{analysis_id}`
+- 식당 상세의 메뉴: `GET /api/restaurants/{restaurant_id}/menus/{dish_id}`
+
+## 참고사항
+
+- Explore 지도 핀: `GET /api/restaurants/checked` (메뉴 확인된 식당만)
+- 시간은 UTC (`+00:00`). 화면에서는 기기 시간대로 바뀜
+- 에러는 `{"error": {"code", "message", "detail"}}`. `code` 로 분기
+"""
+
 app = FastAPI(
     title=settings.app_name,
+    description=DESCRIPTION,
     version="0.1.0",
     swagger_ui_parameters=SWAGGER_UI_PARAMETERS,
     docs_url=None,
@@ -163,7 +194,7 @@ def custom_openapi() -> dict:
                     }
                 }
             else:  # 우리가 선언한 422
-                r422["description"] += " · 요청 형식 오류"
+                r422["description"] += ", 요청 형식 오류"
 
     schemas = schema.get("components", {}).get("schemas", {})
     schemas.pop("HTTPValidationError", None)
