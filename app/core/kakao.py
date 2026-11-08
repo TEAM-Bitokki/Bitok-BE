@@ -1,7 +1,6 @@
 """카카오 로컬 API. 음식점(FD6)만 찾는다"""
 
 import logging
-import math
 from dataclasses import dataclass
 
 import httpx
@@ -43,8 +42,8 @@ def _place(doc: dict) -> Place:
     """category_name 은 "음식점 > 한식 > 냉면". 두 번째 칸만 쓴다"""
     parts = [p.strip() for p in (doc.get("category_name") or "").split(">")]
     lat, lng = float(doc["y"]), float(doc["x"])
-    if not (math.isfinite(lat) and math.isfinite(lng)):
-        raise ValueError("좌표가 숫자가 아니다")
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        raise ValueError("좌표가 올바르지 않다")
     return Place(
         kakao_place_id=doc["id"],
         name=doc["place_name"],

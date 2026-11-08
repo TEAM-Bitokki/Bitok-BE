@@ -249,7 +249,10 @@ async def test_search_sorts_by_our_coordinates(client, session, monkeypatch):
     assert [i["kakao_place_id"] for i in items] == ["b", "a"]
 
 
-@pytest.mark.parametrize("broken", [{"category_name": {"x": 1}}, {"y": "Infinity"}])
+@pytest.mark.parametrize(
+    "broken",
+    [{"category_name": {"x": 1}}, {"y": "Infinity"}, {"y": "NaN"}, {"y": "91"}],
+)
 @pytest.mark.asyncio
 async def test_kakao_bad_document_is_502(client, session, monkeypatch, broken):
     sign_up(client)
