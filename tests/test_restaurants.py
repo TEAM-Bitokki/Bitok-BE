@@ -1,5 +1,6 @@
 """지도. 식당 등록, 주변 식당, 이름 검색"""
 
+import logging
 import math
 
 import httpx
@@ -248,11 +249,25 @@ async def test_search_sorts_by_our_coordinates(client, session, monkeypatch):
     assert [i["kakao_place_id"] for i in items] == ["b", "a"]
 
 
+@pytest.mark.parametrize("broken", [{"category_name": {"x": 1}}, {"y": "Infinity"}])
 @pytest.mark.asyncio
-async def test_kakao_bad_document_is_502(client, session, monkeypatch):
+async def test_kakao_bad_document_is_502(client, session, monkeypatch, broken):
     sign_up(client)
-    kakao_pages(monkeypatch, [{**doc(1), "category_name": {"x": 1}}])
+    kakao_pages(monkeypatch, [{**doc(1), **broken}])
 
     r = client.get("/api/restaurants/search", headers=H, params={"q": "식당"})
 
     assert r.status_code == 502
+
+
+def test_kakao_urls_stay_out_of_logs(caplog):
+    """httpx 요청 로그에서 카카오 것만 빠진다. 다른 요청 로그는 남는다"""
+    caplog.set_level(logging.INFO, logger="httpx")
+    log = logging.getLogger("httpx")
+
+    for url in ("https://dapi.kakao.com/x?y=37.5", "https://example.com/v1"):
+        log.info("HTTP Request: %s %s", "GET", httpx.URL(url))
+
+    assert [r.getMessage() for r in caplog.records] == [
+        "HTTP Request: GET https://example.com/v1"
+    ]

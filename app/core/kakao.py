@@ -1,6 +1,7 @@
 """카카오 로컬 API. 음식점(FD6)만 찾는다"""
 
 import logging
+import math
 from dataclasses import dataclass
 
 import httpx
@@ -9,7 +10,6 @@ from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
 
 log = logging.getLogger(__name__)
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
 BASE = "https://dapi.kakao.com/v2/local/search"
 FOOD = "FD6"
@@ -29,16 +29,29 @@ class Place:
     lng: float
 
 
+class _HideKakaoUrl(logging.Filter):
+    """httpx 요청 로그 중 카카오 것만 뺀다. URL 에 사용자 위치가 있다"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not any("dapi.kakao.com" in str(a) for a in record.args or ())
+
+
+logging.getLogger("httpx").addFilter(_HideKakaoUrl())
+
+
 def _place(doc: dict) -> Place:
     """category_name 은 "음식점 > 한식 > 냉면". 두 번째 칸만 쓴다"""
     parts = [p.strip() for p in (doc.get("category_name") or "").split(">")]
+    lat, lng = float(doc["y"]), float(doc["x"])
+    if not (math.isfinite(lat) and math.isfinite(lng)):
+        raise ValueError("좌표가 숫자가 아니다")
     return Place(
         kakao_place_id=doc["id"],
         name=doc["place_name"],
         category=parts[1] if len(parts) > 1 else None,
         address=doc.get("road_address_name") or doc.get("address_name") or None,
-        lat=float(doc["y"]),
-        lng=float(doc["x"]),
+        lat=lat,
+        lng=lng,
     )
 
 

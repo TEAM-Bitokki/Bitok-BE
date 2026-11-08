@@ -132,7 +132,8 @@ async def nearby(
     )
     items = await _merge(session, user_id, places, lat, lng, list(checked))
     inside = [i for i in items if meters(lat, lng, i.lat, i.lng) <= radius_m]
-    return RestaurantListResponse(items=sorted(inside, key=lambda i: i.distance_m))
+    inside.sort(key=lambda i: meters(lat, lng, i.lat, i.lng))
+    return RestaurantListResponse(items=inside)
 
 
 async def search(
@@ -147,5 +148,5 @@ async def search(
     places = await kakao.keyword(q, lat, lng, limit)
     items = await _merge(session, user_id, places, lat, lng)
     if lat is not None and lng is not None:  # 저장된 좌표가 카카오와 다를 수 있다
-        items.sort(key=lambda i: i.distance_m)
+        items.sort(key=lambda i: meters(lat, lng, i.lat, i.lng))
     return RestaurantListResponse(items=items)
