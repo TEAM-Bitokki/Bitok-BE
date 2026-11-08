@@ -198,7 +198,7 @@ async def test_list_my_checks_uses_cursor(client, session):
 
 
 def _cursor(my_check_id) -> str:
-    raw = json.dumps({"saved_at": "2026-11-08T11:30:00+00:00", "id": my_check_id})
+    raw = json.dumps({"at": "2026-11-08T11:30:00+00:00", "id": my_check_id})
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 

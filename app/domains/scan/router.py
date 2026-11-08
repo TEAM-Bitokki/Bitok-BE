@@ -5,6 +5,7 @@ from fastapi import APIRouter, File, Form, Path, UploadFile, status
 from app.core.db import SessionDep
 from app.core.deps import CurrentUser
 from app.core.errors import UNAUTHORIZED, ErrorCode, responses
+from app.domains.restaurant.schemas import MenuDetailResponse
 from app.domains.scan import analysis, service, staff
 from app.domains.scan.schemas import (
     AnalyzeRequest,
@@ -15,6 +16,8 @@ from app.domains.scan.schemas import (
 )
 
 router = APIRouter(prefix="/api/scans", tags=["스캔/분석"])
+
+analysis_router = APIRouter(prefix="/api/analyses", tags=["스캔/분석"])
 
 ScanId = Annotated[int, Path(ge=1, le=2**63 - 1)]  # BIGINT
 
@@ -144,3 +147,25 @@ async def result(
     scan_id: ScanId, user_id: CurrentUser, session: SessionDep
 ) -> ResultResponse:
     return await staff.result(session, user_id, scan_id)
+
+
+@analysis_router.get(
+    "/{analysis_id}",
+    response_model=MenuDetailResponse,
+    summary="내 기록의 메뉴 상세",
+    description=(
+        "Staff Check Results, Saved Menus 의 View details. "
+        "그 스캔에서 받은 직원 답으로 판정한다."
+    ),
+    responses=responses(
+        UNAUTHORIZED,
+        (404, "없는 분석"),
+        (422, "식이 프로필 미등록", ErrorCode.PROFILE_REQUIRED),
+    ),
+)
+async def analysis_detail(
+    analysis_id: Annotated[int, Path(ge=1, le=2**63 - 1)],
+    user_id: CurrentUser,
+    session: SessionDep,
+) -> MenuDetailResponse:
+    return await staff.analysis_detail(session, user_id, analysis_id)

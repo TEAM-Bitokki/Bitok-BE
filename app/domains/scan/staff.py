@@ -1,4 +1,4 @@
-"""직원 응답, 최종 결과"""
+"""직원 응답, 최종 결과, 내 기록의 메뉴 상세"""
 
 from datetime import UTC, datetime
 
@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.models import Dish
 from app.core.errors import BitokError, ErrorCode
+from app.domains.restaurant.menu import menu_detail
 from app.domains.restaurant.models import Restaurant
+from app.domains.restaurant.schemas import MenuDetailResponse
 from app.domains.scan import judge as judging
 from app.domains.scan.judge import load_facts, load_rules
 from app.domains.scan.models import Analysis, Scan, StaffCheck, StaffQuestion
@@ -106,3 +108,32 @@ async def result(session: AsyncSession, user_id: int, scan_id: int) -> ResultRes
         ],
         checked_at=(checked_at or scan.created_at).isoformat(),
     )
+
+
+async def analysis_detail(
+    session: AsyncSession, user_id: int, analysis_id: int
+) -> MenuDetailResponse:
+    """Staff Check Results, Saved Menus 의 View details. 그 스캔의 직원 답으로"""
+    row = (
+        await session.execute(
+            select(Analysis, Dish)
+            .join(Dish, Dish.id == Analysis.dish_id)
+            .join(Scan, Scan.id == Analysis.scan_id)
+            .where(Analysis.id == analysis_id, Scan.user_id == user_id)
+        )
+    ).first()
+    if row is None:
+        raise BitokError(ErrorCode.NOT_FOUND, "없는 분석입니다.", 404)
+    a, d = row
+    rules = await load_rules(session, user_id)
+    if rules is None:
+        raise BitokError(
+            ErrorCode.PROFILE_REQUIRED, "식이 프로필을 먼저 저장하세요.", 422
+        )
+    facts = await load_facts(session, a.scan_id)
+    checked_at = await session.scalar(
+        select(func.max(StaffQuestion.answered_at)).where(
+            StaffQuestion.scan_id == a.scan_id, StaffQuestion.dish_id == d.id
+        )
+    )
+    return menu_detail(d, a.matches, rules, facts.get((a.scan_id, d.id)), checked_at)

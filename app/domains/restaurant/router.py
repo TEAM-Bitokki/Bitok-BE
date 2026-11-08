@@ -1,9 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Path, Query
 
+from app.core.db import SessionDep
 from app.core.deps import CurrentUser
 from app.core.errors import UNAUTHORIZED, ErrorCode, responses
+from app.domains.restaurant import service
 from app.domains.restaurant.schemas import (
     MenuDetailResponse,
     PersonalizedMenuResponse,
@@ -14,6 +16,9 @@ from app.domains.restaurant.schemas import (
 )
 
 router = APIRouter(prefix="/api/restaurants", tags=["식당"])
+
+BigId = Annotated[int, Path(ge=1, le=2**63 - 1)]  # BIGINT
+PROFILE = (422, "식이 프로필 미등록", ErrorCode.PROFILE_REQUIRED)
 
 
 @router.post(
@@ -87,17 +92,27 @@ async def search(
         "Checked Menu 를 무한 스크롤로 내려준다. "
         "모든 사용자가 분석한 메뉴이고, 저장 여부와 무관하다.\n\n"
         "메뉴 단위로 묶어서 내려준다. 같은 메뉴를 여러 명이 분석했어도 한 줄이고, "
-        "가장 최근에 확인된 순이다."
+        "가장 최근에 분석한 순이다.\n\n"
+        "현재 위치(lat, lng)를 주면 `distance_m` 을 채운다."
     ),
-    responses=responses(UNAUTHORIZED, (404, "없는 식당")),
+    responses=responses(
+        UNAUTHORIZED,
+        (404, "없는 식당"),
+        (422, "잘못된 커서", ErrorCode.VALIDATION_ERROR),
+    ),
 )
 async def detail(
-    restaurant_id: int,
+    restaurant_id: BigId,
     user_id: CurrentUser,
+    session: SessionDep,
     cursor: Annotated[str | None, Query(description="이전 응답의 next_cursor")] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    lat: Annotated[float | None, Query(ge=-90, le=90)] = None,
+    lng: Annotated[float | None, Query(ge=-180, le=180)] = None,
 ) -> RestaurantDetailResponse:
-    raise NotImplementedError
+    return await service.detail(
+        session, user_id, restaurant_id, cursor, limit, lat, lng
+    )
 
 
 @router.get(
@@ -106,16 +121,17 @@ async def detail(
     summary="내 프로필 기준 메뉴 목록",
     description=(
         "식당 상세의 **For you**. 같은 식당이라도 사용자마다 다른 결과가 나온다.\n\n"
-        "같은 메뉴가 여러 번 분석됐으면 하나로 합쳐서 보여준다. "
-        "판정은 가장 위험한 쪽을 따른다."
+        "같은 메뉴는 하나로 합친다. 재료는 가장 최근 분석, "
+        "직원 답은 최근 6개월 모든 사용자의 답을 모아 가장 위험한 쪽을 따른다."
     ),
-    responses=responses(UNAUTHORIZED, (404, "없는 식당")),
+    responses=responses(UNAUTHORIZED, (404, "없는 식당"), PROFILE),
 )
 async def for_you(
-    restaurant_id: int,
+    restaurant_id: BigId,
     user_id: CurrentUser,
+    session: SessionDep,
 ) -> PersonalizedMenuResponse:
-    raise NotImplementedError
+    return await service.for_you(session, user_id, restaurant_id)
 
 
 @router.get(
@@ -124,18 +140,19 @@ async def for_you(
     summary="메뉴 상세",
     description=(
         "Menu Detail 화면. 판정과 걸린 성분, 일반적인 재료를 보여준다.\n\n"
-        " 여러 사람이 다르게 답했으면 "
-        "가장 위험한 쪽을 따른다.\n\n"
-        "- 하나라도 들어가요 → Avoid\n"
-        "- 없고 모르겠어요 가 있으면 → Not Sure\n"
-        "- 전부 안 들어가요 → Safe\n\n"
-        "최근 6개월 기록만 집계한다. 레시피 변경과 오래된 오답을 함께 걸러낸다."
+        "여러 사람이 다르게 답했으면 가장 위험한 쪽을 따른다.\n\n"
+        "- 하나라도 들어가요 -> Avoid\n"
+        "- 없고 모르겠어요가 있으면 -> Not Sure\n"
+        "- 전부 안 들어가요 -> Safe\n\n"
+        "최근 6개월 기록만 집계한다. 레시피 변경과 오래된 오답을 함께 걸러낸다.\n\n"
+        "`matches[].verdict` 로 Avoid, Not Sure 칸을 나눈다."
     ),
-    responses=responses(UNAUTHORIZED, (404, "없는 식당 또는 메뉴")),
+    responses=responses(UNAUTHORIZED, (404, "없는 식당 또는 메뉴"), PROFILE),
 )
 async def menu_detail(
-    restaurant_id: int,
-    dish_id: int,
+    restaurant_id: BigId,
+    dish_id: BigId,
     user_id: CurrentUser,
+    session: SessionDep,
 ) -> MenuDetailResponse:
-    raise NotImplementedError
+    return await service.menu_detail(session, user_id, restaurant_id, dish_id)

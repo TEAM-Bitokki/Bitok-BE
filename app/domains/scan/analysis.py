@@ -25,6 +25,7 @@ from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
 from app.domains.check.models import MyCheck
 from app.domains.profile.models import DietaryProfile
+from app.domains.restaurant.service import sync_menus
 from app.domains.scan import judge as judging
 from app.domains.scan.dish import DishInfo, describe_dishes
 from app.domains.scan.judge import ASK_FOR_TAG, Rules, load_rules, status
@@ -71,12 +72,14 @@ async def analyze(
     infos = await describe_dishes(ask)
 
     locked = (
-        select(Scan.id)
+        select(Scan.id, Scan.restaurant_id)
         .where(Scan.id == scan_id, Scan.user_id == user_id)
         .with_for_update()
     )
-    if await session.scalar(locked) is None:  # 같은 스캔을 두 번 보내면 차례로
+    row = (await session.execute(locked)).first()  # 같은 스캔을 두 번 보내면 차례로
+    if row is None:
         raise BitokError(ErrorCode.NOT_FOUND, "없는 스캔입니다.", 404)
+    restaurant_id = row.restaurant_id
     await _not_saved(session, scan_id)
     await session.execute(
         select(DietaryProfile.id)
@@ -121,6 +124,11 @@ async def analyze(
         for n, (d, i, _, ko, en, target) in enumerate(asks, 1)
     ]
     session.add_all(analyses + questions)
+    if restaurant_id is not None:
+        await session.flush()
+        await sync_menus(
+            session, [restaurant_id], {dish_ids[k]: n for k, n in menus.items()}
+        )
     await session.commit()
 
     return AnalyzeResponse(

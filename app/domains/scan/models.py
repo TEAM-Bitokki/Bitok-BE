@@ -47,7 +47,10 @@ class Scan(Base):
         back_populates="scan", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("idx_scans_user", "user_id", created_at.desc()),)
+    __table_args__ = (
+        Index("idx_scans_user", "user_id", created_at.desc()),
+        Index("idx_scans_restaurant", "restaurant_id"),  # 식당 상세
+    )
 
 
 class Analysis(Base):

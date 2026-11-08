@@ -92,10 +92,14 @@ async def load_facts(
     )
     facts = defaultdict(dict)
     for scan_id, dish_id, target, name, answer in rows:
-        menu = facts[scan_id, dish_id]
-        old = menu.get((target, name), answer)
-        menu[(target, name)] = min(old, answer, key=CAUTION.index)
+        add_fact(facts[scan_id, dish_id], (target, name), answer)
     return facts
+
+
+def add_fact(facts: Facts, key: tuple[str | None, str], answer: str) -> None:
+    """같은 것을 여러 번 답했으면 조심스러운 답을 남긴다"""
+    old = facts.get(key, answer)
+    facts[key] = min(old, answer, key=CAUTION.index)
 
 
 def status(match: dict, rules: Rules) -> MatchStatus:
@@ -133,7 +137,7 @@ def match_verdict(match: dict, rules: Rules, facts: Facts) -> Verdict:
     """걸린 재료 하나. 가게마다 다른 재료는 직원이 안 들어간다고 해야 safe"""
     if match["likelihood"] == Likelihood.TYPICAL:
         return Verdict.AVOID
-    verdicts = []
+    verdicts, unsure = [], False
     for row in match.get("via") or [match["ingredient"]]:
         keys = []
         if row in GENERIC:
@@ -148,29 +152,42 @@ def match_verdict(match: dict, rules: Rules, facts: Facts) -> Verdict:
             v = Verdict.AVOID  # 해산물이 없다고 해도 새우가 있다고 했으면 avoid
         else:
             v = _answered(facts, [(row, row)]) or _answered(facts, keys)
+        if v is None:
+            unsure |= StaffAnswer.UNSURE in {facts.get(k) for k in [(row, row), *keys]}
         verdicts.append(v)
-    if Verdict.AVOID in verdicts:
+    # 다른 스캔에서 메뉴 전체에 "새우 들어가요/안 들어가요" 라고 들었다
+    names = {match["ingredient"]} | _reasons(match, rules)
+    whole = _answered(facts, [(None, n) for n in sorted(names)])
+    if Verdict.AVOID in verdicts or whole == Verdict.AVOID:
         return Verdict.AVOID
     if verdicts and all(v == Verdict.SAFE for v in verdicts):
         return Verdict.SAFE
-    return Verdict.NOT_SURE
+    if unsure:  # 이 재료를 물었더니 모르겠다고 했다. 메뉴 전체 답보다 먼저
+        return Verdict.NOT_SURE
+    return whole or Verdict.NOT_SURE
 
 
-def judge(matches: list[dict], rules: Rules, facts: Facts | None = None) -> Verdict:
-    """facts 가 없으면 직원 확인 전 판정. 재료를 하나도 모르면 not_sure"""
+def judge(
+    matches: list[dict],
+    rules: Rules,
+    facts: Facts | None = None,
+    unknown: bool | None = None,
+) -> Verdict:
+    """facts 가 없으면 직원 확인 전 판정. unknown 은 재료를 하나도 모르는 메뉴"""
     if not (rules.allergen_ids or rules.blocked_tags):
         return Verdict.SAFE
     facts = facts or {}
-    if not matches:  # 고른 알레르기와 식단을 그대로 물었다
-        names = {name for name, _ in rules.allergens} | _words(rules.blocked_tags)
-        return _answered(facts, [(None, n) for n in sorted(names)]) or (
-            Verdict.NOT_SURE
-        )
     verdicts = {
         match_verdict(m, rules, facts)
         for m in matches
         if status(m, rules) != MatchStatus.ALLOWED
     }
+    blind = not matches if unknown is None else unknown
+    if blind:  # 고른 알레르기와 식단을 그대로 물었다
+        names = {name for name, _ in rules.allergens} | _words(rules.blocked_tags)
+        verdicts.add(
+            _answered(facts, [(None, n) for n in sorted(names)]) or Verdict.NOT_SURE
+        )
     for v in (Verdict.AVOID, Verdict.NOT_SURE):
         if v in verdicts:
             return v

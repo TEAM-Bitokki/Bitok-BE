@@ -1,14 +1,10 @@
 """저장한 메뉴"""
 
-import base64
-import binascii
-import json
-from datetime import datetime
-
 from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.cursor import decode_cursor, encode_cursor
 from app.common.models import Dish
 from app.common.schemas import Page
 from app.core.errors import BitokError, ErrorCode
@@ -17,45 +13,6 @@ from app.domains.check.schemas import MyCheckItem, MyCheckListResponse
 from app.domains.restaurant.models import Restaurant
 from app.domains.scan.judge import judge, load_facts, load_rules
 from app.domains.scan.models import Analysis, Scan
-
-
-def _encode_cursor(saved_at: datetime, my_check_id: int) -> str:
-    """마지막 항목의 정렬 값을 다음 요청에서 사용할 불투명한 문자열로 만든다."""
-    payload = json.dumps(
-        {"saved_at": saved_at.isoformat(), "id": my_check_id},
-        separators=(",", ":"),
-    ).encode()
-    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> tuple[datetime, int]:
-    """커서를 저장 시각과 my_checks.id로 복원하고 잘못된 값은 422로 처리한다."""
-    try:
-        padding = "=" * (-len(cursor) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
-        saved_at = datetime.fromisoformat(payload["saved_at"])
-        my_check_id = payload["id"]
-        if (
-            saved_at.tzinfo is None
-            or not isinstance(my_check_id, int)
-            or isinstance(my_check_id, bool)
-            or not 1 <= my_check_id <= 2**63 - 1  # BIGINT
-        ):
-            raise ValueError
-    except (
-        binascii.Error,
-        KeyError,
-        RecursionError,
-        TypeError,
-        UnicodeDecodeError,
-        ValueError,
-    ):
-        raise BitokError(
-            ErrorCode.VALIDATION_ERROR,
-            "올바르지 않은 커서입니다.",
-            status_code=422,
-        ) from None
-    return saved_at, my_check_id
 
 
 async def list_my_checks(
@@ -75,7 +32,7 @@ async def list_my_checks(
     )
 
     if cursor is not None:
-        saved_at, my_check_id = _decode_cursor(cursor)
+        saved_at, my_check_id = decode_cursor(cursor)
         # saved_at이 같은 행은 id를 두 번째 정렬 기준으로 사용해 중복, 누락을 막는다.
         query = query.where(
             or_(
@@ -132,7 +89,7 @@ async def list_my_checks(
     ]
     last_check = visible[-1][0]
     next_cursor = (
-        _encode_cursor(last_check.saved_at, last_check.id) if has_more else None
+        encode_cursor(last_check.saved_at, last_check.id) if has_more else None
     )
     return MyCheckListResponse(
         items=items,

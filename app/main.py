@@ -31,6 +31,7 @@ from app.domains.ingredient.router import router as ingredient_router
 from app.domains.profile.router import router as profile_router
 from app.domains.restaurant.router import router as restaurant_router
 from app.domains.saved.router import router as saved_router
+from app.domains.scan.router import analysis_router
 from app.domains.scan.router import router as scan_router
 
 SWAGGER_UI_PARAMETERS = {
@@ -65,6 +66,7 @@ for r in (
     ingredient_router,
     restaurant_router,
     scan_router,
+    analysis_router,
     check_router,
     saved_router,
 ):
