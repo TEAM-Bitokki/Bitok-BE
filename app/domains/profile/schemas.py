@@ -2,7 +2,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from app.common.schemas import DietOption, DietType, Severity
+from app.common.schemas import DietOption, DietType
 
 
 IngredientId = Annotated[int, Field(ge=1, le=2**63 - 1)]  # BIGINT
@@ -21,8 +21,6 @@ class ProfileResponse(BaseModel):
         default_factory=list,
         examples=[["eats_egg", "eats_dairy"]],
     )
-    severity: Severity = Field(default=Severity.NORMAL, examples=["normal"])
-    cross_contamination: bool = Field(default=False, examples=[False])
 
 
 class ProfileRequest(BaseModel):
@@ -35,5 +33,3 @@ class ProfileRequest(BaseModel):
     diet_options: list[DietOption] = Field(
         default_factory=list, examples=[["eats_egg"]]
     )
-    severity: Severity = Field(default=Severity.NORMAL, examples=["normal"])
-    cross_contamination: bool = Field(default=False, examples=[False])

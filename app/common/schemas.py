@@ -46,11 +46,6 @@ class DietOption(StrEnum):
     EATS_DAIRY = "eats_dairy"
 
 
-class Severity(StrEnum):
-    NORMAL = "normal"
-    SEVERE = "severe"
-
-
 class StaffAnswer(StrEnum):
     YES = "yes"  # 들어가요
     NO = "no"  # 안 들어가요

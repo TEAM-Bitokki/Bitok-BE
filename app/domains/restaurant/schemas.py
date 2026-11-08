@@ -23,12 +23,10 @@ class RestaurantListResponse(BaseModel):
 
 
 class ResolveRestaurantRequest(BaseModel):
-    """nearby search 응답에서 고른 항목을 그대로 돌려보낸다"""
+    """nearby search 응답에서 고른 항목. 카카오에서 다시 찾는 데만 쓴다"""
 
     kakao_place_id: str = Field(min_length=1, max_length=40, examples=["26338954"])
     name: str = Field(min_length=1, max_length=120, examples=["맛있는식당"])
-    category: str | None = Field(default=None, max_length=60, examples=["한식"])
-    address: str | None = Field(default=None, max_length=200, examples=["멋진 주소"])
     lat: float = Field(ge=-90, le=90, allow_inf_nan=False, examples=[37.5633])
     lng: float = Field(ge=-180, le=180, allow_inf_nan=False, examples=[126.9855])
 

@@ -107,7 +107,6 @@ async def analyze(
             dish_id=d,
             verdict=judging.judge(matches[d], rules),
             matches=matches[d],
-            asked_tags=[a[2] for a in asks if a[0] == d],
         )
         for d in order
     ]
