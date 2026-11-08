@@ -97,7 +97,7 @@ async def test_resolve_unknown_place_404(client, session, monkeypatch):
     assert await session.scalar(select(func.count()).select_from(Restaurant)) == 0
 
 
-@pytest.mark.parametrize("meters,inside", [(999, True), (1001, False)])
+@pytest.mark.parametrize("meters,inside", [(999, True), (1000.4, False), (1001, False)])
 @pytest.mark.asyncio
 async def test_nearby_radius_edge(client, session, monkeypatch, meters, inside):
     """반경 경계 바로 안쪽 식당도 빠지지 않는다"""
@@ -229,3 +229,30 @@ async def test_kakao_failure_is_502(client, session, monkeypatch, key):
 
     assert r.status_code == 502
     assert r.json()["error"]["code"] == "MAP_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_search_sorts_by_our_coordinates(client, session, monkeypatch):
+    """저장된 좌표가 카카오와 달라도 응답의 거리순이 맞다"""
+    sign_up(client)
+    session.add(Restaurant(kakao_place_id="b", name="b", lat=LAT + 0.0005, lng=LNG))
+    await session.commit()
+    fake(monkeypatch, "keyword", [place("a", 0.001), place("b", 0.002)])
+
+    items = client.get(
+        "/api/restaurants/search",
+        headers=H,
+        params={"q": "식당", "lat": LAT, "lng": LNG},
+    ).json()["items"]
+
+    assert [i["kakao_place_id"] for i in items] == ["b", "a"]
+
+
+@pytest.mark.asyncio
+async def test_kakao_bad_document_is_502(client, session, monkeypatch):
+    sign_up(client)
+    kakao_pages(monkeypatch, [{**doc(1), "category_name": {"x": 1}}])
+
+    r = client.get("/api/restaurants/search", headers=H, params={"q": "식당"})
+
+    assert r.status_code == 502

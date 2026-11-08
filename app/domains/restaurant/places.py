@@ -15,7 +15,7 @@ from app.domains.restaurant.schemas import (
     RestaurantBrief,
     RestaurantListResponse,
 )
-from app.domains.restaurant.service import EARTH_M, brief, distance_m
+from app.domains.restaurant.service import EARTH_M, brief, distance_m, meters
 from app.domains.saved.models import SavedRestaurant
 
 NAME_MAX = Restaurant.__table__.c.name.type.length
@@ -94,9 +94,9 @@ async def _merge(
         items.append(
             RestaurantBrief(
                 kakao_place_id=p.kakao_place_id,
-                name=p.name,
-                category=p.category,
-                address=p.address,
+                name=p.name[:NAME_MAX],
+                category=p.category and p.category[:CATEGORY_MAX],
+                address=p.address and p.address[:ADDRESS_MAX],
                 lat=p.lat,
                 lng=p.lng,
                 distance_m=distance_m(lat, lng, p.lat, p.lng) if near else None,
@@ -118,23 +118,21 @@ async def nearby(
     limit: int,
 ) -> RestaurantListResponse:
     """메뉴를 확인한 식당은 카카오 상위 결과에 없어도 반경 안이면 넣는다"""
+    await session.rollback()  # 카카오를 기다리는 동안 DB 커넥션을 잡고 있지 않게
     places = await kakao.nearby(lat, lng, radius_m, limit)
     # 경계에 걸친 식당도 넣고 아래서 정확한 거리로 거른다
     dlat = math.degrees(radius_m / EARTH_M) * 1.01
     dlng = dlat / max(math.cos(math.radians(min(abs(lat) + dlat, 89))), 0.01)
-    checked = [
-        r
-        for r in await session.scalars(
-            select(Restaurant).where(
-                Restaurant.lat.between(lat - dlat, lat + dlat),
-                Restaurant.lng.between(lng - dlng, lng + dlng),
-                Restaurant.checked_menu_count > 0,
-            )
+    checked = await session.scalars(
+        select(Restaurant).where(
+            Restaurant.lat.between(lat - dlat, lat + dlat),
+            Restaurant.lng.between(lng - dlng, lng + dlng),
+            Restaurant.checked_menu_count > 0,
         )
-        if distance_m(lat, lng, float(r.lat), float(r.lng)) <= radius_m
-    ]
-    items = await _merge(session, user_id, places, lat, lng, checked)
-    return RestaurantListResponse(items=sorted(items, key=lambda i: i.distance_m))
+    )
+    items = await _merge(session, user_id, places, lat, lng, list(checked))
+    inside = [i for i in items if meters(lat, lng, i.lat, i.lng) <= radius_m]
+    return RestaurantListResponse(items=sorted(inside, key=lambda i: i.distance_m))
 
 
 async def search(
@@ -145,7 +143,9 @@ async def search(
     lng: float | None,
     limit: int,
 ) -> RestaurantListResponse:
+    await session.rollback()  # 카카오를 기다리는 동안 DB 커넥션을 잡고 있지 않게
     places = await kakao.keyword(q, lat, lng, limit)
-    return RestaurantListResponse(
-        items=await _merge(session, user_id, places, lat, lng)
-    )
+    items = await _merge(session, user_id, places, lat, lng)
+    if lat is not None and lng is not None:  # 저장된 좌표가 카카오와 다를 수 있다
+        items.sort(key=lambda i: i.distance_m)
+    return RestaurantListResponse(items=items)

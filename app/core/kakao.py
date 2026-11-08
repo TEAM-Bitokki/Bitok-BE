@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.errors import BitokError, ErrorCode
 
 log = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 BASE = "https://dapi.kakao.com/v2/local/search"
 FOOD = "FD6"
@@ -77,7 +78,7 @@ async def _search(
                     places.setdefault(p.kakao_place_id, p)
                 if body["meta"]["is_end"] or until in places:
                     break
-    except (httpx.HTTPError, KeyError, TypeError, ValueError) as e:
+    except (httpx.HTTPError, AttributeError, KeyError, TypeError, ValueError) as e:
         status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else ""
         # 요청 URL 에 사용자 위치가 있어서 예외를 통째로 남기지 않는다
         log.warning("카카오 로컬 API 실패: %s %s", type(e).__name__, status)
