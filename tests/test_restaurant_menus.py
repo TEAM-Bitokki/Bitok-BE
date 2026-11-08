@@ -218,6 +218,20 @@ async def test_whole_menu_answers(
 
 
 @pytest.mark.asyncio
+async def test_unsure_beats_whole_menu_no(client, session, scan, monkeypatch):
+    """새우젓은 모르겠다고 했으면 메뉴 전체에 새우가 없다고 들어도 not_sure"""
+    await profile(client, session, ["새우"])
+    llm_knows(monkeypatch, KIMCHI)
+    r = await place(session, scan)
+    menu = analyze(client, scan, "김치찌개").json()["menus"][0]
+    await public_answer(session, r, menu["dish_id"], "새우젓", "unsure", "새우젓")
+    await public_answer(session, r, menu["dish_id"], "새우", "no")
+
+    detail = client.get(url(r, f"/menus/{menu['dish_id']}"), headers=H).json()
+    assert detail["verdict"] == "not_sure"
+
+
+@pytest.mark.asyncio
 async def test_menu_detail_common_ingredients(client, session, scan, monkeypatch):
     await profile(client, session)
     llm_knows(monkeypatch, KIMCHI)

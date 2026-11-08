@@ -137,7 +137,7 @@ def match_verdict(match: dict, rules: Rules, facts: Facts) -> Verdict:
     """걸린 재료 하나. 가게마다 다른 재료는 직원이 안 들어간다고 해야 safe"""
     if match["likelihood"] == Likelihood.TYPICAL:
         return Verdict.AVOID
-    verdicts = []
+    verdicts, unsure = [], False
     for row in match.get("via") or [match["ingredient"]]:
         keys = []
         if row in GENERIC:
@@ -152,13 +152,18 @@ def match_verdict(match: dict, rules: Rules, facts: Facts) -> Verdict:
             v = Verdict.AVOID  # 해산물이 없다고 해도 새우가 있다고 했으면 avoid
         else:
             v = _answered(facts, [(row, row)]) or _answered(facts, keys)
+        if v is None:
+            unsure |= StaffAnswer.UNSURE in {facts.get(k) for k in [(row, row), *keys]}
         verdicts.append(v)
+    # 다른 스캔에서 메뉴 전체에 "새우 들어가요/안 들어가요" 라고 들었다
     names = {match["ingredient"]} | _reasons(match, rules)
     whole = _answered(facts, [(None, n) for n in sorted(names)])
     if Verdict.AVOID in verdicts or whole == Verdict.AVOID:
         return Verdict.AVOID
     if verdicts and all(v == Verdict.SAFE for v in verdicts):
         return Verdict.SAFE
+    if unsure:  # 이 재료를 물었더니 모르겠다고 했다. 메뉴 전체 답보다 먼저
+        return Verdict.NOT_SURE
     return whole or Verdict.NOT_SURE
 
 
