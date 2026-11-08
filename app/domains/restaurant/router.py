@@ -50,13 +50,12 @@ async def resolve(
     response_model=RestaurantListResponse,
     summary="주변 식당 조회",
     description=(
-        "카카오 로컬 API 결과에 우리 데이터를 합쳐서 돌려준다. "
-        "거리순이다.\n\n"
-        "checked_menu_count>0 이면 지도 핀에 숫자를 띄운다. "
-        "이런 식당은 limit 와 상관없이 반경 안이면 모두 넣는다.\n\n"
+        "식당 고르기(Restaurant Select) 화면. 카카오 로컬 API 결과에 우리 데이터를 합쳐서 "
+        "가까운 순으로 돌려준다. 최대 limit 개.\n\n"
         "restaurant_id 는 null 일 수 있다. (카카오에만 있고 우리 DB 에 아직) "
         "Select 를 누르면 `POST /api/restaurants` 로 id 를 받는다. "
-        "식별은 항상 kakao_place_id 로 한다."
+        "식별은 항상 kakao_place_id 로 한다.\n\n"
+        "Explore 지도 핀은 `GET /api/restaurants/checked` 를 쓴다."
     ),
     responses=responses(UNAUTHORIZED, KAKAO),
 )
@@ -69,6 +68,28 @@ async def nearby(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> RestaurantListResponse:
     return await places.nearby(session, user_id, lat, lng, radius_m, limit)
+
+
+@router.get(
+    "/checked",
+    response_model=RestaurantListResponse,
+    summary="메뉴를 확인한 식당 (지도 핀)",
+    description=(
+        "Explore 지도 화면. 반경 안에서 메뉴를 확인한 식당만 가까운 순으로 돌려준다. "
+        "최대 limit 개.\n\n"
+        "`checked_menu_count` 를 핀 숫자로 띄운다. 카카오를 부르지 않는다."
+    ),
+    responses=responses(UNAUTHORIZED),
+)
+async def checked(
+    user_id: CurrentUser,
+    session: SessionDep,
+    lat: Lat,
+    lng: Lng,
+    radius_m: Annotated[int, Query(ge=100, le=20000)] = 3000,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> RestaurantListResponse:
+    return await places.checked(session, user_id, lat, lng, radius_m, limit)
 
 
 @router.get(
