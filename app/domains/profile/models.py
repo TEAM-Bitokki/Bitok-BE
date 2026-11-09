@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
-    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -28,8 +27,6 @@ class DietaryProfile(Base):
     diet_type: Mapped[str] = mapped_column(String(20), server_default="none")
     # Vegetarian 하위 질문 결과 {'eats_egg','eats_dairy'}
     diet_options: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}")
-    severity: Mapped[str] = mapped_column(String(20), server_default="normal")
-    cross_contamination: Mapped[bool] = mapped_column(Boolean, server_default="false")
     # 최종적으로 피해야 할 분류
     blocked_tags: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
@@ -48,7 +45,6 @@ class DietaryProfile(Base):
             "diet_type IN ('none','vegan','vegetarian','pescatarian')",
             name="ck_diet_type",
         ),
-        CheckConstraint("severity IN ('normal','severe')", name="ck_severity"),
     )
 
 

@@ -46,8 +46,6 @@ async def get_profile(session: AsyncSession, user_id: int) -> ProfileResponse:
         ],
         diet_type=profile.diet_type,
         diet_options=profile.diet_options,
-        severity=profile.severity,
-        cross_contamination=profile.cross_contamination,
     )
 
 
@@ -74,8 +72,6 @@ async def put_profile(
     values = {
         "diet_type": body.diet_type,
         "diet_options": sorted(set(options)),
-        "severity": body.severity,
-        "cross_contamination": body.cross_contamination,
         "blocked_tags": blocked_tags(body.diet_type, options),
     }
     profile_id = await session.scalar(

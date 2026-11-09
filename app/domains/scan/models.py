@@ -14,7 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, BigPK
@@ -61,14 +61,12 @@ class Analysis(Base):
     id: Mapped[BigPK]
     scan_id: Mapped[int] = mapped_column(ForeignKey("scans.id", ondelete="CASCADE"))
     dish_id: Mapped[int] = mapped_column(ForeignKey("dishes.id", ondelete="CASCADE"))
+    # 분석 당시 판정. 화면에는 지금 프로필로 다시 판정한 값을 쓴다
     verdict: Mapped[str] = mapped_column(String(20))
     # 그때 메뉴의 재료 전부. 걸렸는지는 읽을 때 지금 프로필로 다시 본다
     # [{ingredient_id, ingredient, ingredient_en, tags, likelihood, source, via}]
     # via 는 이 재료가 나온 dish_ingredients 이름. 두부 -> 대두 면 대두의 via 는 [두부]
     matches: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default="[]")
-
-    # 이 분석에서 실제로 직원에게 물어본 성분 태그
-    asked_tags: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -98,10 +98,75 @@ async def test_resolve_unknown_place_404(client, session, monkeypatch):
     assert await session.scalar(select(func.count()).select_from(Restaurant)) == 0
 
 
+@pytest.mark.asyncio
+async def test_nearby_is_kakao_order_with_our_data(client, session, monkeypatch):
+    """카카오 가까운 순 그대로, 우리 식당이면 id, 핀 숫자, 저장 여부를 붙인다. limit 을 지킨다"""
+    user_id = sign_up(client)
+    ours = Restaurant(kakao_place_id="b", name="b", lat=LAT + 0.002, lng=LNG)
+    ours.checked_menu_count = 2
+    elsewhere = Restaurant(kakao_place_id="c", name="c", lat=LAT + 0.0005, lng=LNG)
+    elsewhere.checked_menu_count = 1  # 카카오 결과에 없으면 nearby 에는 안 나온다
+    session.add_all([ours, elsewhere])
+    await session.flush()
+    session.add(SavedRestaurant(user_id=user_id, restaurant_id=ours.id))
+    await session.commit()
+    calls = fake(monkeypatch, "nearby", [place("a", 0.001), place("b", 0.002)])
+
+    items = client.get(
+        "/api/restaurants/nearby",
+        headers=H,
+        params={"lat": LAT, "lng": LNG, "radius_m": 1000, "limit": 2},
+    ).json()["items"]
+
+    assert calls == [(LAT, LNG, 1000, 2)]
+    assert [
+        (i["kakao_place_id"], i["checked_menu_count"], i["is_saved"]) for i in items
+    ] == [("a", 0, False), ("b", 2, True)]
+    assert (items[0]["restaurant_id"], items[0]["distance_m"]) == (None, 111)
+
+
+@pytest.mark.asyncio
+async def test_checked_only_restaurants_with_menus(client, session, monkeypatch):
+    """지도 핀. 메뉴를 확인한 식당만 가까운 순으로, limit 까지. 카카오는 안 부른다"""
+    user_id = sign_up(client)
+    rows = [
+        ("near", 0.0005, 1),
+        ("mid", 0.001, 3),
+        ("far", 0.002, 2),
+        ("empty", 0.0003, 0),
+        ("outside", 0.02, 5),
+    ]
+    session.add_all(
+        Restaurant(kakao_place_id=k, name=k, lat=LAT + d, lng=LNG, checked_menu_count=n)
+        for k, d, n in rows
+    )
+    await session.commit()
+    mid = await session.scalar(
+        select(Restaurant).where(Restaurant.kakao_place_id == "mid")
+    )
+    session.add(SavedRestaurant(user_id=user_id, restaurant_id=mid.id))
+    await session.commit()
+    calls = fake(monkeypatch, "nearby", [])
+
+    items = client.get(
+        "/api/restaurants/checked",
+        headers=H,
+        params={"lat": LAT, "lng": LNG, "radius_m": 1000, "limit": 2},
+    ).json()["items"]
+
+    assert calls == []
+    assert [
+        (i["kakao_place_id"], i["checked_menu_count"], i["is_saved"]) for i in items
+    ] == [
+        ("near", 1, False),
+        ("mid", 3, True),
+    ]
+
+
 @pytest.mark.parametrize("meters,inside", [(999, True), (1000.4, False), (1001, False)])
 @pytest.mark.asyncio
-async def test_nearby_radius_edge(client, session, monkeypatch, meters, inside):
-    """반경 경계 바로 안쪽 식당도 빠지지 않는다"""
+async def test_checked_radius_edge(client, session, meters, inside):
+    """반경 경계 바로 안쪽 식당도 빠지지 않고, 0.4m 밖은 빠진다"""
     sign_up(client)
     dlat = math.degrees(meters / 6_371_000)
     session.add(
@@ -114,48 +179,14 @@ async def test_nearby_radius_edge(client, session, monkeypatch, meters, inside):
         )
     )
     await session.commit()
-    fake(monkeypatch, "nearby", [])
 
     items = client.get(
-        "/api/restaurants/nearby",
+        "/api/restaurants/checked",
         headers=H,
         params={"lat": LAT, "lng": LNG, "radius_m": 1000},
     ).json()["items"]
 
     assert [i["kakao_place_id"] for i in items] == (["edge"] if inside else [])
-
-
-@pytest.mark.asyncio
-async def test_nearby_merges_our_data(client, session, monkeypatch):
-    """카카오에 없어도 메뉴를 확인한 식당은 반경 안이면 넣는다. 거리순"""
-    user_id = sign_up(client)
-    ours = [
-        Restaurant(kakao_place_id="b", name="b", lat=LAT + 0.002, lng=LNG),
-        Restaurant(kakao_place_id="c", name="c", lat=LAT + 0.0005, lng=LNG),
-        Restaurant(kakao_place_id="far", name="far", lat=LAT + 0.02, lng=LNG),
-        Restaurant(kakao_place_id="empty", name="empty", lat=LAT + 0.0003, lng=LNG),
-    ]
-    for r, count in zip(ours, (2, 1, 1, 0), strict=True):
-        r.checked_menu_count = count
-    session.add_all(ours)
-    await session.flush()
-    session.add(SavedRestaurant(user_id=user_id, restaurant_id=ours[0].id))
-    await session.commit()
-    calls = fake(monkeypatch, "nearby", [place("a", 0.001), place("b", 0.002)])
-
-    r = client.get(
-        "/api/restaurants/nearby",
-        headers=H,
-        params={"lat": LAT, "lng": LNG, "radius_m": 1000, "limit": 2},
-    )
-
-    items = r.json()["items"]
-    assert calls == [(LAT, LNG, 1000, 2)]
-    assert [
-        (i["kakao_place_id"], i["checked_menu_count"], i["is_saved"]) for i in items
-    ] == [("c", 1, False), ("a", 0, False), ("b", 2, True)]
-    assert items[1]["restaurant_id"] is None
-    assert items[1]["distance_m"] == 111
 
 
 @pytest.mark.asyncio
@@ -233,10 +264,18 @@ async def test_kakao_failure_is_502(client, session, monkeypatch, key):
 
 
 @pytest.mark.asyncio
-async def test_search_sorts_by_our_coordinates(client, session, monkeypatch):
-    """저장된 좌표가 카카오와 달라도 응답의 거리순이 맞다"""
+async def test_search_keeps_kakao_place(client, session, monkeypatch):
+    """저장된 좌표가 카카오와 달라도 위치와 순서는 카카오 그대로, 우리 정보만 붙인다"""
     sign_up(client)
-    session.add(Restaurant(kakao_place_id="b", name="b", lat=LAT + 0.0005, lng=LNG))
+    session.add(
+        Restaurant(
+            kakao_place_id="b",
+            name="b",
+            lat=LAT + 0.0005,
+            lng=LNG,
+            checked_menu_count=2,
+        )
+    )
     await session.commit()
     fake(monkeypatch, "keyword", [place("a", 0.001), place("b", 0.002)])
 
@@ -246,7 +285,12 @@ async def test_search_sorts_by_our_coordinates(client, session, monkeypatch):
         params={"q": "식당", "lat": LAT, "lng": LNG},
     ).json()["items"]
 
-    assert [i["kakao_place_id"] for i in items] == ["b", "a"]
+    assert [(i["kakao_place_id"], i["distance_m"]) for i in items] == [
+        ("a", 111),
+        ("b", 222),
+    ]
+    assert items[1]["restaurant_id"] is not None
+    assert items[1]["checked_menu_count"] == 2
 
 
 @pytest.mark.parametrize(
@@ -274,3 +318,31 @@ def test_kakao_urls_stay_out_of_logs(caplog):
     assert [r.getMessage() for r in caplog.records] == [
         "HTTP Request: GET https://example.com/v1"
     ]
+
+
+@pytest.mark.parametrize(
+    "here,there",
+    [((0.0, 179.999), (0.0, -179.999)), ((0.0, -179.999), (0.0, 179.999))],
+)
+@pytest.mark.asyncio
+async def test_checked_across_date_line(client, session, here, there):
+    """날짜변경선 건너편 식당도 반경 안이면 나온다"""
+    sign_up(client)
+    session.add(
+        Restaurant(
+            kakao_place_id="x",
+            name="x",
+            lat=there[0],
+            lng=there[1],
+            checked_menu_count=1,
+        )
+    )
+    await session.commit()
+
+    items = client.get(
+        "/api/restaurants/checked",
+        headers=H,
+        params={"lat": here[0], "lng": here[1], "radius_m": 1000},
+    ).json()["items"]
+
+    assert [i["kakao_place_id"] for i in items] == ["x"]
