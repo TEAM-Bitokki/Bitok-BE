@@ -2,7 +2,7 @@
 
 import math
 
-from sqlalchemy import Float, cast, func, select
+from sqlalchemy import Float, cast, func, or_, select, true
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -141,13 +141,21 @@ async def checked(
     # 경계에 걸친 식당도 넣고 정확한 거리로 거른다
     dlat = math.degrees(radius_m / EARTH_M) * 1.01
     dlng = dlat / max(math.cos(math.radians(min(abs(lat) + dlat, 89))), 0.01)
+    if abs(lat) + dlat >= 89:  # 극점 근처는 경도로 거르지 않는다
+        lng_box = true()
+    elif lng - dlng < -180:  # 날짜변경선을 넘으면 양쪽으로
+        lng_box = or_(Restaurant.lng >= lng - dlng + 360, Restaurant.lng <= lng + dlng)
+    elif lng + dlng > 180:
+        lng_box = or_(Restaurant.lng >= lng - dlng, Restaurant.lng <= lng + dlng - 360)
+    else:
+        lng_box = Restaurant.lng.between(lng - dlng, lng + dlng)
     away = _meters_sql(lat, lng)
     found = list(
         await session.scalars(
             select(Restaurant)
             .where(
                 Restaurant.lat.between(lat - dlat, lat + dlat),
-                Restaurant.lng.between(lng - dlng, lng + dlng),
+                lng_box,
                 Restaurant.checked_menu_count > 0,
                 away <= radius_m,
             )

@@ -318,3 +318,31 @@ def test_kakao_urls_stay_out_of_logs(caplog):
     assert [r.getMessage() for r in caplog.records] == [
         "HTTP Request: GET https://example.com/v1"
     ]
+
+
+@pytest.mark.parametrize(
+    "here,there",
+    [((0.0, 179.999), (0.0, -179.999)), ((0.0, -179.999), (0.0, 179.999))],
+)
+@pytest.mark.asyncio
+async def test_checked_across_date_line(client, session, here, there):
+    """날짜변경선 건너편 식당도 반경 안이면 나온다"""
+    sign_up(client)
+    session.add(
+        Restaurant(
+            kakao_place_id="x",
+            name="x",
+            lat=there[0],
+            lng=there[1],
+            checked_menu_count=1,
+        )
+    )
+    await session.commit()
+
+    items = client.get(
+        "/api/restaurants/checked",
+        headers=H,
+        params={"lat": here[0], "lng": here[1], "radius_m": 1000},
+    ).json()["items"]
+
+    assert [i["kakao_place_id"] for i in items] == ["x"]
