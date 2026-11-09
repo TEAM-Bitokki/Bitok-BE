@@ -264,10 +264,18 @@ async def test_kakao_failure_is_502(client, session, monkeypatch, key):
 
 
 @pytest.mark.asyncio
-async def test_search_sorts_by_our_coordinates(client, session, monkeypatch):
-    """저장된 좌표가 카카오와 달라도 응답의 거리순이 맞다"""
+async def test_search_keeps_kakao_place(client, session, monkeypatch):
+    """저장된 좌표가 카카오와 달라도 위치와 순서는 카카오 그대로, 우리 정보만 붙인다"""
     sign_up(client)
-    session.add(Restaurant(kakao_place_id="b", name="b", lat=LAT + 0.0005, lng=LNG))
+    session.add(
+        Restaurant(
+            kakao_place_id="b",
+            name="b",
+            lat=LAT + 0.0005,
+            lng=LNG,
+            checked_menu_count=2,
+        )
+    )
     await session.commit()
     fake(monkeypatch, "keyword", [place("a", 0.001), place("b", 0.002)])
 
@@ -277,7 +285,12 @@ async def test_search_sorts_by_our_coordinates(client, session, monkeypatch):
         params={"q": "식당", "lat": LAT, "lng": LNG},
     ).json()["items"]
 
-    assert [i["kakao_place_id"] for i in items] == ["b", "a"]
+    assert [(i["kakao_place_id"], i["distance_m"]) for i in items] == [
+        ("a", 111),
+        ("b", 222),
+    ]
+    assert items[1]["restaurant_id"] is not None
+    assert items[1]["checked_menu_count"] == 2
 
 
 @pytest.mark.parametrize(
