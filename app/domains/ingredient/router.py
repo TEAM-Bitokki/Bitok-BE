@@ -20,7 +20,9 @@ router = APIRouter(prefix="/api/ingredients", tags=["성분"])
         "한국어, 영어, 별칭 (달걀 -> 계란)으로 검색된다. "
         "생선, 갑각류, 견과류처럼 분류 이름도 항목으로 있다.\n\n"
         "이름이 같은 것 -> 앞이 같은 것 -> 포함하는 것 순서. "
-        "별칭으로 찾았으면 `matched_alias` 에 그 별칭이 온다."
+        "별칭으로 찾았으면 `matched_alias` 에 그 별칭이 온다.\n\n"
+        "`q` 가 없거나 비어 있으면 전체 목록을 가나다순으로 준다. "
+        "이때 `limit` 은 무시한다."
     ),
     responses=responses(UNAUTHORIZED),
 )
@@ -30,12 +32,11 @@ async def search_ingredients(
     q: Annotated[
         str,
         Query(
-            min_length=1,
             max_length=80,
-            description="검색어(한국어 영어)",
+            description="검색어(한국어 영어). 비우면 전체 목록",
             examples=["새우"],
         ),
-    ],
+    ] = "",
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> IngredientSearchResponse:
     return IngredientSearchResponse(items=await service.search(session, q, limit))

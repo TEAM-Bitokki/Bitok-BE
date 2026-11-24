@@ -19,10 +19,23 @@ def _rank(text: str | None, q: str) -> int:
     return 2 if q in text else 3
 
 
+async def _all(session: AsyncSession) -> list[IngredientItem]:
+    """검색어가 없을 때. 목록 전체를 가나다순으로"""
+    rows = await session.execute(
+        select(Ingredient.id, Ingredient.name_ko, Ingredient.name_en)
+        .where(Ingredient.searchable)
+        .order_by(Ingredient.name_ko)
+    )
+    return [
+        IngredientItem(ingredient_id=id_, name_ko=ko, name_en=en, matched_alias=None)
+        for id_, ko, en in rows
+    ]
+
+
 async def search(session: AsyncSession, q: str, limit: int) -> list[IngredientItem]:
     q = unicodedata.normalize("NFC", q).strip().lower()  # DB 는 NFC
     if not q:
-        return []
+        return await _all(session)
     escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     pattern = f"%{escaped}%"
 
